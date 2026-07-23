@@ -1,0 +1,26 @@
+[
+  {"template": ["🔌 連接資料", "PostgreSQL"],
+   "_comment": "連線的 host / port / 密碼是敏感值,不放進 repo。要自己跑就補上這三個 fill(值取自 gitignored 的 segma-backend/spec/e2e/config/data_sources.yml 的 postgres 倉);不補的話 gen_transcript 會報 unfilled 提醒你。",
+   "fill": {"<帳號>": "postgres", "<資料庫名>": "postgres", "<schema 名>": "public", "<名稱,例如 我的倉>": "b_信用卡倉"}},
+
+  {"template": ["👤 分析主體(要分析的對象)", "客戶(單一主鍵)"],
+   "fill": {"<客戶主檔,例如 dim_customer>": "dimension.card_holder", "『客戶』": "『b_客戶』", "<主鍵欄位,例如 customer_id>": "customer_id"}},
+
+  {"template": ["📅 事件(發生的事)", "交易(不同名欄位對應)"],
+   "fill": {"<交易表>": "credit_card.transaction_history", "『交易』": "『b_交易』", "『客戶』": "『b_客戶』", "<customer_id>": "customer_id", "<buyer_id>": "primary_holder_id"}},
+
+  {"template": ["📊 指標(可計算的數字)", "總消費金額 = SUM"],
+   "fill": {"『客戶』": "『b_客戶』", "『總消費金額』": "『b_總消費金額』", "『交易』": "『b_交易』", "<金額欄位,例如 amount>": "amount"}},
+
+  {"template": ["🏷️ 標籤(對象的屬性 / 計算結果)", "〔聚合〕消費次數 = COUNT"],
+   "fill": {"『客戶』": "『b_客戶』", "『消費次數』": "『b_消費次數』", "『交易』": "『b_交易』"}},
+
+  {"template": ["🏷️ 標籤(對象的屬性 / 計算結果)", "〔計算〕距上次消費天數(近因)"],
+   "fill": {"『客戶』": "『b_客戶』", "『距上次消費天數』": "『b_距上次消費天數』", "『交易』": "『b_交易』"}},
+
+  {"template": ["🎯 分群(篩出一群對象)", "高價值(指標超過門檻)"],
+   "fill": {"『高價值客戶』": "『b_高價值客戶』", "『總消費金額』": "『b_總消費金額』", "<10000>": "10000"}},
+
+  {"template": ["📦 行動資料(整理輸出欄位)", "客戶輪廓(trait)"],
+   "fill": {"『客戶輪廓』": "『b_客戶輪廓』", "<姓名、總消費金額、所屬分群>": "b_消費次數、b_距上次消費天數"}}
+]
