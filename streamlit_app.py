@@ -211,6 +211,7 @@ PROMPT_TEMPLATES = {
             ("〔聚合〕最高單筆 = MAX", "幫『客戶』建聚合標籤『最高單筆消費』= 取『交易』的 <金額欄位> 最大值(MAX)。"),
             ("〔聚合〕最低單筆 = MIN", "幫『客戶』建聚合標籤『最低單筆消費』= 取 <金額欄位> 最小值(MIN)。"),
             ("〔聚合〕平均客單價 = AVG", "幫『客戶』建聚合標籤『平均客單價』= 取 <金額欄位> 平均(AVG)。"),
+            ("〔聚合〕某期間總消費 = SUM + 時間範圍", "幫『客戶』建聚合標籤『<名稱,例如 2022年總消費>』= 把『交易』的 <金額欄位> 加總(SUM),但只算 <期間,例如 2022-01-01 到 2022-12-31> 這段時間內的交易(對交易時間加一個範圍篩選)。"),
             ("〔計算〕最近一次消費金額(取最後一次)", "幫『客戶』建計算(compute)標籤『最近一次消費金額』= 取『交易』裡最後一次交易的 <金額欄位> 值(依 <交易時間欄位> 排序、取最後一筆那次)。算法照這個倉的方言挑對的(list_compute_functions)。"),
             ("〔計算〕首次消費金額(取第一次)", "幫『客戶』建計算標籤『首次消費金額』= 取『第一次交易』的 <金額欄位> 值(依 <交易時間> 排序,取第一筆;one_of_first_event)。"),
             ("〔計算〕距上次消費天數(近因)", "幫『客戶』建計算標籤『距上次消費天數』= 距今最後一次『交易』的天數(days_since_last_event)。"),
@@ -222,9 +223,12 @@ PROMPT_TEMPLATES = {
             ("〔計算〕買過的不重複商品清單", "幫『客戶』建計算標籤『買過的商品清單』= 列出『交易』裡出現過的不重複 <商品欄位>(unique_event_list)。"),
             ("〔衍生〕客單價 = 公式引用標籤", "幫『客戶』建衍生(derive)標籤『客單價』=『總消費金額』除以『消費次數』(引用我已建好的標籤,用它們現在的名稱)。"),
             ("〔衍生〕折扣率 = 公式引用標籤", "幫『客戶』建衍生標籤『折扣率』=『總折扣金額』除以『總消費金額』。"),
+            ("〔衍生〕分級(CASE 引用標籤)", "幫『客戶』建衍生(derive)標籤『<分級名,例如 VIP級別>』,用 CASE 依『<門檻標籤,例如 2022年總消費>』分級:大於等於 <門檻1,例如 60000> 給『<高級,例如 白金>』、大於等於 <門檻2,例如 30000> 給『<中級,例如 金卡>』、其餘給『<低級,例如 一般>』。"),
+            ("〔指標〕把指標包成標籤", "幫『客戶』建 metric 型標籤『<名稱,例如 年度購買金額>』,直接引用已建好的指標『<指標名>』(把指標包成一個標籤,方便放進行動資料輸出或當分群條件)。"),
             ("〔SQL〕用自訂 SQL 算標籤", "幫『客戶』建 sql 型標籤『<名稱>』,用這段我自己寫的 SQL:<你的 SQL>(要點:SELECT 客戶主鍵 + 一個計算欄位,FROM 某表;大小寫混合的表 / 欄位名記得加雙引號)。"),
         ],
         "🎯 分群(篩出一群對象)": [
+            ("〔進階〕自訂多條件分群", "建分群『<名稱>』,條件:<條件描述>。(規則:同一群內的條件是 AND、可另設一組排除;事件次數用『發生次數在 X 到 Y 之間』;標籤範圍用『介於 X 到 Y』、等於某值用『是 X』、沒有值用『沒有值』。)"),
             ("高價值(指標超過門檻)", "建分群『高價值客戶』:『總消費金額』指標 超過 <10000>。"),
             ("低頻(指標低於門檻)", "建分群『低頻客戶』:『消費次數』少於 <3>。"),
             ("金額區間(between)", "建分群『中間消費客戶』:『總消費金額』介於 <5000> 到 <20000>。"),
@@ -248,10 +252,11 @@ PROMPT_TEMPLATES = {
             ("RFM 名單(trait)", "建 trait 型行動資料『RFM 名單』,輸出 <距上次消費天數(近因)、消費次數(頻率)、總消費金額(金額)>。"),
             ("高價值名單(trait)", "建 trait 型行動資料『高價值名單』,輸出 <姓名、總消費金額、最近一次消費金額>。"),
             ("只針對某分群(trait + 條件)", "建 trait 型行動資料『VIP 聯絡清單』,只輸出屬於『VIP』分群的客戶的 <姓名、email、手機>。"),
+            ("〔進階〕trait 行動資料 + 自訂條件", "建 trait 型行動資料『<名稱>』,輸出 <標籤欄位,例如 姓名、VIP級別、2022年總消費> 這些標籤,只包含符合這些條件的客戶:<條件描述>。(條件規則同分群:群內 AND、可另設一組排除、事件用『發生次數在 X 到 Y 之間』。)"),
             ("客戶指標彙總(metric)", "建 metric 型行動資料『客戶指標彙總』,以『客戶』當分析維度,彙總 <總消費金額、消費次數>。"),
-            ("每月銷售(metric + 時間分桶)", "建 metric 型行動資料『每月銷售』,把『總消費金額』依 <月> 分桶,以『客戶』分組。"),
+            ("每月銷售(metric + 時間分桶)", "建 metric 型行動資料『每月銷售』,把『總消費金額』依 <月> 分桶,並用一個標籤『<分組標籤,例如 VIP級別>』當分組維度(metric 型行動資料至少要選一個標籤當維度)。"),
             ("各分群人數(metric)", "建 metric 型行動資料『各分群人數』,彙總各分群客戶數。"),
-            ("自訂 SQL 匯出(sql)", "建 sql 型行動資料『<名稱>』,用一段我自己寫的 SQL 當輸出(FROM 用真實存在的表 / 欄位,大小寫混合的名稱加雙引號)。"),
+            ("自訂 SQL 匯出(sql)", "建 sql 型行動資料『<名稱>』,用這段我自己寫的 SQL 當輸出:<你的 SQL>(FROM 用真實存在的表 / 欄位,大小寫混合的名稱加雙引號)。"),
             ("商品銷售明細(sql)", "建 sql 型行動資料『商品銷售明細』,用 SQL 輸出 <商品、數量、金額> 明細。"),
             ("落地成實體表(materialization=table)", "建 trait 型行動資料『客戶輪廓(每日更新)』,把它 materialization 設成 table(落地成實體表、可排程更新),輸出 <姓名、總消費、分群>。"),
         ],
@@ -364,6 +369,7 @@ PROMPT_TEMPLATES = {
             ("[aggregation] Max Single = MAX", "Give 'Customer' an aggregation Trait 'Max Single Purchase' = MAX of the <amount column>."),
             ("[aggregation] Min Single = MIN", "Give 'Customer' an aggregation Trait 'Min Single Purchase' = MIN of the <amount column>."),
             ("[aggregation] Avg Order Value = AVG", "Give 'Customer' an aggregation Trait 'Avg Order Value' = AVG of the <amount column>."),
+            ("[aggregation] Period Spend = SUM + time range", "Give 'Customer' an aggregation Trait '<name, e.g. 2022 Total Spend>' = SUM of the Transaction <amount column>, but only for transactions within <period, e.g. 2022-01-01 to 2022-12-31> (add a range filter on the transaction time)."),
             ("[compute] Last Purchase Amount (latest)", "Give 'Customer' a compute Trait 'Last Purchase Amount' = the <amount column> of the MOST RECENT Transaction (ordered by <time column>, the last one). Pick the compute function that fits this warehouse's dialect (list_compute_functions)."),
             ("[compute] First Purchase Amount (earliest)", "Give 'Customer' a compute Trait 'First Purchase Amount' = the <amount column> of the FIRST Transaction (ordered by <time column>, first one; one_of_first_event)."),
             ("[compute] Days Since Last Purchase (recency)", "Give 'Customer' a compute Trait 'Days Since Last Purchase' = days_since_last_event on Transactions."),
@@ -375,9 +381,12 @@ PROMPT_TEMPLATES = {
             ("[compute] Distinct Products List", "Give 'Customer' a compute Trait 'Products Bought' = the distinct list of <product column> across Transactions (unique_event_list)."),
             ("[derive] AOV = formula over traits", "Give 'Customer' a derive Trait 'Avg Order Value' = 'Total Spend' divided by 'Purchase Count' (reference existing traits by their current names)."),
             ("[derive] Discount Rate = formula over traits", "Give 'Customer' a derive Trait 'Discount Rate' = 'Total Discount' divided by 'Total Spend'."),
+            ("[derive] Tier via CASE over a trait", "Give 'Customer' a derive Trait '<name, e.g. VIP Tier>' using CASE over '<threshold trait, e.g. Total Spend 2022>': >= <t1, e.g. 60000> is '<high, e.g. Platinum>', >= <t2, e.g. 30000> is '<mid, e.g. Gold>', else '<low, e.g. Regular>'."),
+            ("[metric] Wrap a metric as a trait", "Give 'Customer' a metric Trait '<name, e.g. Annual Spend>' that wraps the existing Metric '<metric name>' (so the metric can be output in an action dataset or used as a segment condition)."),
             ("[sql] Custom-SQL Trait", "Give 'Customer' a sql Trait '<name>' using this SQL I write: <your SQL> (the point: SELECT the customer primary key + one computed column, FROM some table; double-quote mixed-case names)."),
         ],
         "🎯 Segment (a group)": [
+            ("[advanced] Custom multi-condition segment", "Build a Segment '<name>' with conditions: <conditions>. (Rules: conditions within a group are AND'd; you can add an exclude group; for events say 'event count between X and Y'; for a trait range say 'between X and Y', for equality 'is X', for missing 'has no value'.)"),
             ("High-value (metric > threshold)", "Build a Segment 'High-Value': 'Total Spend' over <10000>."),
             ("Low-frequency (metric < threshold)", "Build a Segment 'Low-Frequency': 'Purchase Count' under <3>."),
             ("Amount range (between)", "Build a Segment 'Mid-Range': 'Total Spend' between <5000> and <20000>."),
@@ -401,10 +410,11 @@ PROMPT_TEMPLATES = {
             ("RFM List (trait)", "Build a trait Action Dataset 'RFM List' outputting <days-since-last-purchase (recency), purchase count (frequency), total spend (monetary)>."),
             ("High-Value List (trait)", "Build a trait Action Dataset 'High-Value List' outputting <name, total spend, last purchase amount>."),
             ("Scoped to a segment (trait + condition)", "Build a trait Action Dataset 'VIP Contact List' outputting <name, email, mobile> for only the customers in the 'VIP' segment."),
+            ("[advanced] trait Action Dataset + custom conditions", "Build a trait Action Dataset '<name>' outputting these trait columns <columns, e.g. name, VIP tier, 2022 spend>, including only customers matching: <conditions>. (Same condition rules as segments: AND within a group, optional exclude group, events as 'count between X and Y'.)"),
             ("Customer Metric Rollup (metric)", "Build a metric Action Dataset 'Customer Metric Rollup' with 'Customer' as the dimension, rolling up <total spend, purchase count>."),
-            ("Monthly Sales (metric + bucket)", "Build a metric Action Dataset 'Monthly Sales' bucketing 'Total Spend' by <month>, grouped by 'Customer'."),
+            ("Monthly Sales (metric + bucket)", "Build a metric Action Dataset 'Monthly Sales' bucketing 'Total Spend' by <month>, broken down by a trait '<group-by trait, e.g. VIP Tier>' (a metric Action Dataset needs at least one trait as its dimension)."),
             ("Segment Sizes (metric)", "Build a metric Action Dataset 'Segment Sizes' rolling up the customer count per segment."),
-            ("Custom-SQL export (sql)", "Build a sql Action Dataset '<name>' using SQL I write (FROM real tables/columns; double-quote mixed-case names)."),
+            ("Custom-SQL export (sql)", "Build a sql Action Dataset '<name>' using this SQL I write: <your SQL> (FROM real tables/columns; double-quote mixed-case names)."),
             ("Product Sales Detail (sql)", "Build a sql Action Dataset 'Product Sales Detail' outputting <product, quantity, amount> via SQL."),
             ("Materialized as a table (materialization=table)", "Build a trait Action Dataset 'Customer Profile (daily)' with materialization = table (physically materialized, schedulable), outputting <name, total spend, segment>."),
         ],
@@ -522,6 +532,7 @@ SYSTEM_PROMPT = {
 - **引用資源時自己查、直接建,別回頭問使用者 id。** 使用者用『名稱』提到某個指標 / 標籤 / 分群 / 分析主體(例如建分群時說「『總消費金額』指標超過 X」),你就自己用 list_*/search_* 把名稱換成 id、並判斷它掛在哪個分析主體上,然後**直接把分群 / 行動資料建起來**——不要反問使用者「那個指標的 id 是多少」「它屬於哪個分析主體」「要不要物化」。這些你都查得到,問了就違反「主動、少問」。真的查無此名稱,才回報找不到並列出相近的幾個讓他選。
 - **使用者講的『指標』不一定是 Metric 資源。** 標籤(Trait)本身也有 trait_type=metric 這種型別,而且使用者常把聚合標籤(如「總消費金額」)口語講成「指標」。所以要解析一個叫某名字的「指標」時,**list_metrics 跟 list_traits 兩邊都查**,找到後用對應的 condition_type(metric 或 trait)去建條件——不要只 list_metrics 查不到就停下來問或放棄。
 - 建分群 / 行動資料使用者沒特別要求時,用非物化(查詢時計算)的預設直接建,別回頭問要不要落地成表;要落地(materialization=table)是使用者明講才做。
+- **建行動資料(action dataset)時,`data_source_id` 跟 `dim_id` 都自己查出來、別問使用者。** trait / metric 型的:從你要輸出或引用的標籤 / 指標查它們掛在哪個 dim 跟哪個 data source(list_traits / show_trait 會給 dim_id、data_source_id),用那組;sql 型的:只需要 `data_source_id`(不需要 dim)——從 SQL 裡用到的表所屬的那個資料來源查(list_data_sources)。查到就直接建,別回頭問「資料來源 id 是多少」「基於哪個分析主體」。
 """,
     "en": """\
 You are Segma CDP's building assistant, operating through the connected segma MCP
@@ -586,6 +597,7 @@ Traits build on top. Steps:
 - **Resolve references yourself and build directly — never ask the user for an id.** When the user refers to a metric / trait / segment / entity by NAME (e.g. "build a segment where the 'Total Spend' metric is over X"), use list_*/search_* to turn that name into an id and to figure out which entity it hangs off, then **build the segment / action dataset directly** — do NOT ask the user "what's that metric's id", "which entity does it belong to", or "do you want it materialized". You can look all of that up; asking violates "propose, don't pester". Only if the name genuinely isn't found do you report that and list a few close matches to pick from.
 - **What the user calls a "metric" isn't always a Metric resource.** A Trait can have trait_type=metric, and users often call an aggregation trait (e.g. "Total Spend") a "metric" loosely. So to resolve a "metric" by name, check **both list_metrics AND list_traits**, then build the condition with the matching condition_type (metric or trait) — don't stop or give up just because list_metrics alone came up empty.
 - For a segment / action dataset with no explicit request, build it non-materialized (computed at query time) by default instead of asking about materialization; only materialize (materialization=table) when the user explicitly says so.
+- **When building an action dataset, resolve `data_source_id` and `dim_id` yourself — don't ask the user.** For a trait / metric AD: look up the traits/metrics you're outputting or referencing to see which dim and data source they hang off (list_traits / show_trait return dim_id + data_source_id) and use those. For a sql AD: you only need `data_source_id` (no dim) — find it from the data source that owns the tables in your SQL (list_data_sources). Then build directly — never ask "what's the data source id" or "which entity is it based on".
 """,
 }
 
