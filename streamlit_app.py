@@ -155,7 +155,7 @@ UI = {
 PROMPT_TEMPLATES = {
     "zh": {
         "🔌 連接資料": [
-            ("PostgreSQL", "接上我的 PostgreSQL 資料倉。類型是 postgres,連線:host <主機位址>, port <埠,預設 5432>, 帳號 <帳號>, 密碼 <密碼>, database <資料庫名>, schema <schema 名>,資料來源名 <名稱,例如 我的倉>。讀完整份資料結構後,主動提議可以建立哪些『分析主體』(要分析的對象,例如客戶)跟『事件』(發生的事,例如交易),先講給我聽,我確認你再建。"),
+            ("PostgreSQL", "接上我的 PostgreSQL 資料倉。類型是 postgres,連線:host <主機位址>, port <埠,預設 5432>, 帳號 <帳號>, 密碼 <密碼>, database <資料庫名>, schema <schema 名>,資料來源名 <名稱,例如 我的倉>,materialization 先不用開。讀完整份資料結構後,主動提議可以建立哪些『分析主體』(要分析的對象,例如客戶)跟『事件』(發生的事,例如交易),先講給我聽,我確認你再建。"),
             ("MySQL", "接上我的 MySQL 資料倉。類型是 mysql,連線:host <主機>, port <埠,預設 3306>, 帳號 <帳號>, 密碼 <密碼>, database <資料庫名>。讀完結構後主動提議要建哪些分析主體 / 事件,先講給我聽。"),
             ("Greenplum", "接上我的 Greenplum 資料倉。類型是 greenplum,連線:host <主機>, port <埠,預設 5432>, 帳號 <帳號>, 密碼 <密碼>, database <資料庫名>, schema <schema 名>。讀完結構後主動提議設計。"),
             ("SQL Server", "接上我的 SQL Server 資料倉。類型是 sqlserver,連線:host <主機>, port <埠,預設 1433>, 帳號 <帳號>, 密碼 <密碼>, database <資料庫名>。讀完結構後主動提議設計。"),
@@ -223,7 +223,7 @@ PROMPT_TEMPLATES = {
             ("〔計算〕買過的不重複商品清單", "幫『客戶』建計算標籤『買過的商品清單』= 列出『交易』裡出現過的不重複 <商品欄位>(unique_event_list)。"),
             ("〔衍生〕客單價 = 公式引用標籤", "幫『客戶』建衍生(derive)標籤『客單價』=『總消費金額』除以『消費次數』(引用我已建好的標籤,用它們現在的名稱)。"),
             ("〔衍生〕折扣率 = 公式引用標籤", "幫『客戶』建衍生標籤『折扣率』=『總折扣金額』除以『總消費金額』。"),
-            ("〔衍生〕分級(CASE 引用標籤)", "幫『客戶』建衍生(derive)標籤『<分級名,例如 VIP級別>』,用 CASE 依『<門檻標籤,例如 2022年總消費>』分級:大於等於 <門檻1,例如 60000> 給『<高級,例如 白金>』、大於等於 <門檻2,例如 30000> 給『<中級,例如 金卡>』、其餘給『<低級,例如 一般>』。"),
+            ("〔衍生〕分級(用 IIF 引用標籤)", "幫『客戶』建衍生(derive)標籤『<分級名,例如 VIP級別>』,依『<門檻標籤,例如 2022年總消費>』分級:大於等於 <門檻1,例如 60000> 給『<高級,例如 白金>』、大於等於 <門檻2,例如 30000> 給『<中級,例如 金卡>』、其餘給『<低級,例如 一般>』。請用巢狀 IIF 寫公式(先 list_db_functions),不要用 SQL 的 CASE WHEN。"),
             ("〔指標〕把指標包成標籤", "幫『客戶』建 metric 型標籤『<名稱,例如 年度購買金額>』,直接引用已建好的指標『<指標名>』(把指標包成一個標籤,方便放進行動資料輸出或當分群條件)。"),
             ("〔SQL〕用自訂 SQL 算標籤", "幫『客戶』建 sql 型標籤『<名稱>』,用這段我自己寫的 SQL:<你的 SQL>(要點:SELECT 客戶主鍵 + 一個計算欄位,FROM 某表;大小寫混合的表 / 欄位名記得加雙引號)。"),
         ],
@@ -313,7 +313,7 @@ PROMPT_TEMPLATES = {
     },
     "en": {
         "🔌 Connect Data": [
-            ("PostgreSQL", "Connect my PostgreSQL warehouse. Type is postgres — host <host>, port <port, default 5432>, user <user>, password <password>, database <db>, schema <schema>, data source name <name, e.g. My Warehouse>. After reading the full schema, propose which Entities (things to analyze, e.g. customers) and Events (things that happen, e.g. transactions) to build — tell me first, I'll confirm."),
+            ("PostgreSQL", "Connect my PostgreSQL warehouse. Type is postgres — host <host>, port <port, default 5432>, user <user>, password <password>, database <db>, schema <schema>, data source name <name, e.g. My Warehouse>, and leave materialization off. After reading the full schema, propose which Entities (things to analyze, e.g. customers) and Events (things that happen, e.g. transactions) to build — tell me first, I'll confirm."),
             ("MySQL", "Connect my MySQL warehouse. Type is mysql — host <host>, port <port, default 3306>, user <user>, password <password>, database <db>. After reading the schema, propose the Entities/Events to build."),
             ("Greenplum", "Connect my Greenplum warehouse. Type is greenplum — host <host>, port <port, default 5432>, user <user>, password <password>, database <db>, schema <schema>. After reading the schema, propose a design."),
             ("SQL Server", "Connect my SQL Server warehouse. Type is sqlserver — host <host>, port <port, default 1433>, user <user>, password <password>, database <db>. After reading the schema, propose a design."),
@@ -381,7 +381,7 @@ PROMPT_TEMPLATES = {
             ("[compute] Distinct Products List", "Give 'Customer' a compute Trait 'Products Bought' = the distinct list of <product column> across Transactions (unique_event_list)."),
             ("[derive] AOV = formula over traits", "Give 'Customer' a derive Trait 'Avg Order Value' = 'Total Spend' divided by 'Purchase Count' (reference existing traits by their current names)."),
             ("[derive] Discount Rate = formula over traits", "Give 'Customer' a derive Trait 'Discount Rate' = 'Total Discount' divided by 'Total Spend'."),
-            ("[derive] Tier via CASE over a trait", "Give 'Customer' a derive Trait '<name, e.g. VIP Tier>' using CASE over '<threshold trait, e.g. Total Spend 2022>': >= <t1, e.g. 60000> is '<high, e.g. Platinum>', >= <t2, e.g. 30000> is '<mid, e.g. Gold>', else '<low, e.g. Regular>'."),
+            ("[derive] Tier via IIF over a trait", "Give 'Customer' a derive Trait '<name, e.g. VIP Tier>' tiering by '<threshold trait, e.g. Total Spend 2022>': >= <t1, e.g. 60000> is '<high, e.g. Platinum>', >= <t2, e.g. 30000> is '<mid, e.g. Gold>', else '<low, e.g. Regular>'. Write the formula with nested IIF (call list_db_functions first), not a raw SQL CASE WHEN."),
             ("[metric] Wrap a metric as a trait", "Give 'Customer' a metric Trait '<name, e.g. Annual Spend>' that wraps the existing Metric '<metric name>' (so the metric can be output in an action dataset or used as a segment condition)."),
             ("[sql] Custom-SQL Trait", "Give 'Customer' a sql Trait '<name>' using this SQL I write: <your SQL> (the point: SELECT the customer primary key + one computed column, FROM some table; double-quote mixed-case names)."),
         ],

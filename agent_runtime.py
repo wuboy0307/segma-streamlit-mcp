@@ -61,8 +61,13 @@ def build_agent(
     max_tokens: int,
     instructions: str,
     require_confirm: bool = True,
+    temperature: float = 0.0,
+    seed: int | None = None,
 ) -> Agent:
-    """接好一個 agent。require_confirm=True 時破壞性工具走人工核准流程。"""
+    """接好一個 agent。require_confirm=True 時破壞性工具走人工核准流程。
+
+    temperature 預設 0:這是個「照工具建 CDP」的 agent,要的是可重現、每次一樣的動作,
+    不是有創意的措辭,所以低溫最合適。gen_transcript 另外傳固定 seed,讓範例可重現。"""
     toolset = MCPToolset(mcp_url, headers={"Authorization": f"Bearer {token}"}, verify=verify)
     provider_kwargs: dict[str, Any] = {"api_key": api_key}
     if base_url:
@@ -80,13 +85,16 @@ def build_agent(
 
     # retries=5:巢狀工具(create_fact 的 join…)第一次常填不對,靠讀錯誤自我修正;
     # pydantic-ai 預設 tool retry 上限 1,一被擋整個 run 就崩,所以放寬。
+    settings: dict[str, Any] = {"max_tokens": max_tokens, "temperature": temperature}
+    if seed is not None:
+        settings["seed"] = seed
     return Agent(
         model,
         toolsets=toolsets,
         output_type=output_type,
         instructions=instructions,
         retries=5,
-        model_settings={"max_tokens": max_tokens},
+        model_settings=settings,
     )
 
 

@@ -205,9 +205,12 @@ def main():
 
     # require_confirm=False: a transcript run must let the agent act freely (no
     # human-approval gate) — the gate is a UI feature, not part of validation.
+    # temperature=0 + a fixed seed → the same turns produce the same tool calls
+    # run-to-run, so the examples are reproducible (not flaky).
     agent = build_agent(mcp_url=mcp_url, token=token, model_name=model, api_key=api_key,
                         base_url=base_url, verify=False, max_tokens=args.max_tokens,
-                        instructions=system_prompt, require_confirm=False)
+                        instructions=system_prompt, require_confirm=False,
+                        temperature=0.0, seed=42)
 
     print(f"model={model} mcp={mcp_url} turns={len(turns)} lang={args.lang}", file=sys.stderr)
 
