@@ -1,6 +1,6 @@
 [
   {"template": ["📦 行動資料(整理輸出欄位)", "自訂 SQL 匯出(sql)"],
-   "fill": {"<名稱>": "d_每月消費總覽", "<你的 SQL>": "SELECT DATE_TRUNC('month', t.time)::date AS \"month\", COUNT(*) AS \"txn_count\", SUM(t.amount) AS \"total_amount\", AVG(t.amount) AS \"avg_amount\" FROM credit_card.transaction_history t WHERE t.time >= '2022-01-01' AND t.time < '2023-01-01' GROUP BY 1 ORDER BY 1"}},
+   "fill": {"<名稱>": "d_每月消費總覽", "<資料來源名>": "d_信用卡資料倉", "<你的 SQL>": "SELECT DATE_TRUNC('month', t.time)::date AS \"month\", COUNT(*) AS \"txn_count\", SUM(t.amount) AS \"total_amount\", AVG(t.amount) AS \"avg_amount\" FROM credit_card.transaction_history t WHERE t.time >= '2022-01-01' AND t.time < '2023-01-01' GROUP BY 1 ORDER BY 1"}},
 
   {"template": ["📦 行動資料(整理輸出欄位)", "〔進階〕trait 行動資料 + 自訂條件"],
    "fill": {"<名稱>": "d_VIP行銷名單", "<標籤欄位,例如 姓名、VIP級別、2022年總消費>": "d_VIP級別、d_持卡人姓名、d_2022年總消費", "<條件描述>": "『d_2022年總消費』介於 30000 到 999999999"}},
