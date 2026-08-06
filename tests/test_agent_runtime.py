@@ -204,6 +204,34 @@ def test_every_eager_tool_is_non_destructive():
     assert unexpected == set(), unexpected
 
 
+def test_eager_list_holds_nothing_the_system_prompt_forbids():
+    """每輪付 schema 的理由必須是「提示詞叫它用」,不是「提示詞提到它」。
+
+    第一版的 eager 清單是用「工具名出現在提示詞裡」推導的,於是收進了 `get_profile` ——
+    它在提示詞裡唯一的出現是被禁止:「別用 get_profile 之類的工具亂湊」。六次真實
+    gpt-4o 跑測中它被呼叫 0 次,卻每一輪都在付它的 schema。
+
+    這條掃提示詞裡的禁用句,確認被禁的工具沒有出現在 eager 清單。禁用的工具仍然是
+    延後載入、仍然搜得到——這裡拿掉的是「每輪重送」,不是能力。
+    """
+    import re
+
+    app = (Path(__file__).resolve().parent.parent / "streamlit_app.py").read_text()
+    forbidden = set()
+    for line in app.splitlines():
+        # 「別用 X」 / 「不要用 X」 / "don't use X" —— 只看禁用詞之後的部分,
+        # 因為同一句話前半通常正在推薦別的工具。
+        for m in re.finditer(r"(別用|不要用|絕不用|don't use|do not use)(.{0,120})", line):
+            for name in re.findall(r"\b([a-z]+(?:_[a-z]+)+)\b", m.group(2)):
+                forbidden.add(name)
+
+    assert "get_profile" in forbidden, (
+        "掃不到提示詞裡的禁用句了 —— 這條測試已經失去意義,先修它再說"
+    )
+    overlap = forbidden & EAGER_TOOLS
+    assert overlap == set(), f"提示詞叫 agent 不要用,卻每輪送它的 schema:{overlap}"
+
+
 OPENAI_MAX_TOOLS = 128
 
 
@@ -323,6 +351,7 @@ if __name__ == "__main__":
                test_none_defers_everything, test_deferring_removes_no_tool,
                test_eager_tools_env_override, test_every_eager_tool_is_non_destructive,
                test_eager_set_stays_under_the_openai_tool_cap,
+               test_eager_list_holds_nothing_the_system_prompt_forbids,
                test_deferred_schemas_never_reach_the_wire,
                test_a_deferred_destructive_tool_is_still_gated]:
         fn()

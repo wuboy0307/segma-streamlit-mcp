@@ -71,6 +71,11 @@ def _approval_required(ctx: Any, tool_def: Any, tool_args: dict[str, Any]) -> bo
 # demos/build-workflow.md、以及 examples/ 底下所有實錄 transcript 取聯集——也就是
 # 「文件明確叫 agent 用的」加上「真的被用過的」。
 #
+# **只算正面提及。** 第一版是「提示詞裡出現過工具名」就收進來,結果把 `get_profile`
+# 收了進來——它在提示詞裡唯一的出現是「別用 get_profile 之類的工具亂湊」,是被禁止的。
+# 六次真實 gpt-4o 跑測中它被呼叫 0 次。要每輪付 schema 的錢,理由必須是「提示詞叫它
+# 用」,不是「提示詞提到它」。
+#
 # 效果:eager 35 個 = 27,162 tok;延後 117 個 = **每一輪省 22,746 tok(45.6%)**。
 #
 # 用 SEGMA_EAGER_TOOLS 覆寫(逗號分隔);設成 `none` 表示全部延後(最省,但每種資源
@@ -88,9 +93,12 @@ EAGER_TOOLS = frozenset({
     "search_traits", "show_trait",
     # 可用函式清單 —— 建 trait / metric 前要先查
     "list_aggr_functions", "list_compute_functions", "list_db_functions",
-    # 看資料與驗證結果
+    # 看資料與驗證結果。
+    # 沒有 get_profile:提示詞明文叫 agent 不要用它來盤點(要用對應的 list_*),
+    # 而且它的回應會隨使用者擁有的資源無上限成長(本機實測 9,368 tok,其中 399 個
+    # trait 佔 68.8%)。需要時它仍然搜得到。
     "get_segment_data", "get_trait_data", "get_action_dataset_data",
-    "get_feature_store_data", "get_profile",
+    "get_feature_store_data",
     # schema 重抓與啟動同步
     "refresh_data_source_schema", "trigger_sync",
 })

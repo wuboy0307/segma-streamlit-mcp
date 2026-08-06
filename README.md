@@ -145,9 +145,11 @@ Expected an array with maximum length 128, but got an array with length 152 inst
 
 | 設定 | 送出工具數 | tokens / 每一輪 |
 |---|---|---|
-| 全部送(改之前) | 152 | 50,332 —— **但 OpenAI 直接 400** |
-| `EAGER_TOOLS` 內建清單(預設) | 36 | **27,536(−45.3%)** |
+| 全部送(改之前) | 152 | 50,464 —— **但 OpenAI 直接 400** |
+| `EAGER_TOOLS` 內建清單(預設) | 35 | **27,262(−46.0%,每輪省 23,202)** |
 | `SEGMA_EAGER_TOOLS=none` | 1 | 187(−99.6%) |
+
+(35 = eager 34 個加上一個 `search_tools`。)
 
 再用**真的 gpt-4o** 跑同一個任務(建一個事件彙總標籤 + 一個用它的分群,查資料庫確認
 真的建出來),每個設定 3 次:
@@ -174,6 +176,11 @@ Expected an array with maximum length 128, but got an array with length 152 inst
 清單怎麼來的:對 `PROMPTS.md` + `streamlit_app.py` 的提示詞、`segma-mcp/demos/
 build-workflow.md`、以及 `examples/` 底下所有實錄 transcript 取聯集,也就是「文件明確
 叫 agent 用的」加上「真的被用過的」。要調整改 `agent_runtime.EAGER_TOOLS`。
+
+**只算正面提及。** 第一版是「提示詞裡出現過工具名」就收進來,於是收進了 `get_profile`
+—— 它在提示詞裡唯一的出現是被禁止的(「別用 `get_profile` 之類的工具亂湊」),六次真實
+gpt-4o 跑測中被呼叫 0 次,卻每輪都在付它的 schema。已移除,有測試守著
+(`test_eager_list_holds_nothing_the_system_prompt_forbids`)。
 
 延後**不會**繞過破壞性動作的確認閘門:延後只影響 schema 何時送,呼叫時仍然經過
 `ApprovalRequiredToolset`(有測試守著)。
