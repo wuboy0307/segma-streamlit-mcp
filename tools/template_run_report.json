@@ -1,0 +1,91 @@
+[
+  {
+    "file": "session-06-zodiac.json",
+    "turns": [
+      {
+        "label": "🏷️ 標籤(對象的屬性 / 計算結果) · 〔衍生〕星座(生日 → 星座,巢狀 IIF)",
+        "tool_calls": [
+          "ToolSearch",
+          "ToolSearch",
+          "show_dim",
+          "list_db_functions",
+          "list_traits",
+          "list_db_functions",
+          "ToolSearch",
+          "get_trait_data"
+        ],
+        "errors": [
+          "Streamable HTTP error: Error POSTing to endpoint: Bad Gateway"
+        ],
+        "changes": {},
+        "is_error": false,
+        "named_present": {
+          "mcpdemo_持卡人": [],
+          "z_星座": []
+        },
+        "named_missing": [
+          "mcpdemo_持卡人",
+          "z_星座"
+        ],
+        "unreadable_types": [
+          "data_sources",
+          "dims",
+          "facts",
+          "traits",
+          "metrics",
+          "segments",
+          "action_datasets",
+          "destinations",
+          "syncs",
+          "feature_stores"
+        ],
+        "turns": 9,
+        "input_tokens": 350877,
+        "output_tokens": 3571,
+        "cost_usd": 0.8790615,
+        "seconds": 137.0
+      },
+      {
+        "label": "🔍 查詢 / 探索(看看建了什麼) · 看某指標 / 標籤的值",
+        "tool_calls": [
+          "ToolSearch",
+          "ToolSearch",
+          "list_action_datasets",
+          "list_feature_stores",
+          "get_action_dataset_data"
+        ],
+        "errors": [
+          "Error calling tool 'list_feature_stores': HTTP error 500: Internal Server Error - {'code': 500, 'message': \"Mysql2::Error: Column 'user_id' in where clause is ambiguous\", 'errors': [\"Mysql2::Error: Column 'user_id' in where clause is ambiguous\"]}"
+        ],
+        "changes": {},
+        "is_error": false,
+        "named_present": {
+          "mcpdemo_持卡人": [
+            "dims#34"
+          ],
+          "z_星座": [
+            "traits#2203"
+          ]
+        },
+        "named_missing": [],
+        "unreadable_types": [
+          "data_sources",
+          "dims",
+          "facts",
+          "traits",
+          "metrics",
+          "segments",
+          "action_datasets",
+          "destinations",
+          "syncs",
+          "feature_stores"
+        ],
+        "turns": 6,
+        "input_tokens": 429354,
+        "output_tokens": 4862,
+        "cost_usd": 1.1068550000000001,
+        "seconds": 89.5
+      }
+    ]
+  }
+]
