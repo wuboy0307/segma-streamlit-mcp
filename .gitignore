@@ -5,3 +5,4 @@ __pycache__/
 .env
 .env.local
 .streamlit/secrets.toml
+tools/template_run_report.json
