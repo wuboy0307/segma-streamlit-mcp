@@ -90,6 +90,7 @@ curl -sk -X POST https://localhost:1443/api/auth/login \
 | env | `SEGMA_MCP_URL` | segma-mcp 的 `/mcp` 端點。沒設會嘗試由 `SEGMA_ACCESS_URL` 推導 `<url>/mcp`,再不行就畫面輸入 |
 | env | `SEGMA_MCP_VERIFY_TLS` | 預設 `false`(dev/test stack 是 self-signed)。正式憑證設 `true` |
 | env | `LLM_API_KEY` / `LLM_MODEL` / `LLM_BASE_URL` | OpenAI 相容 LLM;缺的畫面補。model 預設 `gpt-4o` |
+| env | `SEGMA_EAGER_TOOLS` | 哪些工具一開始就送完整 schema(逗號分隔)。預設用 `agent_runtime.EAGER_TOOLS`;設 `none` 表示全部延後。見[工具定義的送出成本](#工具定義的送出成本) |
 | URL | `?token=<JWT>` | 部署在 Segma frontend 內時自動帶入(見下) |
 
 ## 部署進 Segma(iframe 模式)
@@ -118,11 +119,44 @@ pydantic-ai 的 `agent.iter` **邊跑邊顯示**:每個工具 ⏳ 開始 → ✅
    動作先問我」開關可關掉這層(仍保留第 1 層)。哪些工具算破壞性見
    `agent_runtime.DESTRUCTIVE_PREFIXES`。
 
+## 工具定義的送出成本
+
+segma-mcp 有 152 個工具。工具定義是**每一輪都重送**的,而這裡走 OpenAI API,是真的
+計費的那條路(本機 Claude Code 走 Tool Search,不付這筆)。
+
+實測 `OpenAIChatModel` 真正送出的 `tools[]`(攔 HTTP request body 量的,不是估的):
+
+| 設定 | 送出工具數 | tokens / 每一輪 |
+|---|---|---|
+| 全部送(2026-08-06 之前) | 152 | 50,332 |
+| `EAGER_TOOLS` 內建清單(預設) | 36 | **27,536(−45.3%)** |
+| `SEGMA_EAGER_TOOLS=none` | 1 | 187(−99.6%) |
+
+**這是延後,不是過濾。** 沒被列進 eager 的工具標上 `defer_loading=True`,schema 不隨
+每一輪送出,但 agent 仍然可以透過 `search_tools` 自己撈進來——能力一個都沒少。所以
+清單寫漏了不會壞掉,只是多花一輪去搜。也因此「不在清單裡」是預設:server 之後新增的
+工具會自動落在延後那邊,而不是自動變成每輪都送。
+
+清單怎麼來的:對 `PROMPTS.md` + `streamlit_app.py` 的提示詞、`segma-mcp/demos/
+build-workflow.md`、以及 `examples/` 底下所有實錄 transcript 取聯集,也就是「文件明確
+叫 agent 用的」加上「真的被用過的」。要調整改 `agent_runtime.EAGER_TOOLS`。
+
+延後**不會**繞過破壞性動作的確認閘門:延後只影響 schema 何時送,呼叫時仍然經過
+`ApprovalRequiredToolset`(有測試守著)。
+
+`none` 那一欄看起來最誘人,但它讓每一種資源第一次使用都要多一輪搜尋,而且**還沒有用真
+的 gpt-4o 跑過**——只驗證過 payload 真的縮小、`search_tools` 真的被提供。要換成 `none`
+之前先跑一次真實流程確認搜尋找得到東西。
+
 ## 回歸測試
 
 - **runtime 單元測試**:`.venv/bin/python tests/test_agent_runtime.py`(或
   `pytest tests/`)——用 pydantic-ai 的 TestModel / FunctionModel 假 model + 假工具,
-  不連真 LLM / MCP,驗證串流事件、破壞性閘門的攔截 / 拒絕(不執行)/ 核准(執行)。
+  不連真 LLM / MCP,驗證串流事件、破壞性閘門的攔截 / 拒絕(不執行)/ 核准(執行),
+  以及工具定義延後載入——其中 `test_deferred_schemas_never_reach_the_wire` 用
+  MockTransport 攔真正的 request body,確認延後的 schema 真的沒被送出去(第一版斷言
+  在序列化**之前**的清單,兩種情況都一樣,會誤報成功);另有一條確認延後的破壞性工具
+  仍然被閘門攔住。
 - **prompt 回歸 case**:app 左側的常用範本,旗艦流程在 `segma-mcp/tests/prompt_eval/`
   有對應的 case(例如 RFM 近因標籤 → `cases/trait-recency-on-demo.yaml`),餵 prompt
   給連著 MCP 的 agent,斷言最終 backend 狀態。跑法見該 harness 的 README。

@@ -13,6 +13,8 @@ streamlit_app.py 負責 UI 與快取;真正「怎麼建 agent、怎麼串流跑�
 
 from __future__ import annotations
 
+import os
+from dataclasses import replace
 from typing import Any, Awaitable, Callable, Optional
 
 from pydantic_ai import Agent, ApprovalRequiredToolset, DeferredToolRequests
@@ -50,6 +52,78 @@ def _approval_required(ctx: Any, tool_def: Any, tool_args: dict[str, Any]) -> bo
     return is_destructive(tool_def.name)
 
 
+# ---------------------------------------------------------------------------
+# 工具定義的送出成本:哪些一開始就給 model 看,哪些等它自己找
+# ---------------------------------------------------------------------------
+#
+# segma-mcp 目前有 152 個工具,整包工具定義是 49,908 tok,而工具定義是**每一輪都重送**
+# 的。這裡走 OpenAI API,是真的計費的那條路(本機 Claude Code 走 Tool Search,不付這筆)。
+#
+# 關鍵區別:這是**延後**,不是過濾。
+#   - 過濾(`.filtered()`)會把工具從 agent 手上拿掉 → 少一個能力。
+#   - 延後(`defer_loading=True`)只改「schema 什麼時候送」→ model 先看到一份精簡清單,
+#     需要別的就透過 tool search 自己撈進來。能力一個都沒少。
+# 所以下面這份清單寫漏了不會壞掉,只是多花一輪去搜;寫太多才是白付 token。
+# 這也是為什麼「不在清單裡」是預設:server 之後新增的工具會自動變成延後載入,
+# 而不是自動變成每一輪都送。
+#
+# 清單怎麼來的(不是猜的):對 PROMPTS.md + streamlit_app.py 的提示詞、segma-mcp 的
+# demos/build-workflow.md、以及 examples/ 底下所有實錄 transcript 取聯集——也就是
+# 「文件明確叫 agent 用的」加上「真的被用過的」。
+#
+# 效果:eager 35 個 = 27,162 tok;延後 117 個 = **每一輪省 22,746 tok(45.6%)**。
+#
+# 用 SEGMA_EAGER_TOOLS 覆寫(逗號分隔);設成 `none` 表示全部延後(最省,但每種資源
+# 第一次用都要多一輪搜尋)。
+EAGER_TOOLS = frozenset({
+    # 建立各資源 —— 建 CDP 的主線
+    "create_data_source", "create_dim", "create_fact", "create_trait",
+    "create_metric", "create_segment", "create_action_dataset",
+    "create_feature_store", "create_destination", "create_sync",
+    # 盤點與 name→id 解析
+    "list_data_sources", "list_data_source_columns", "list_dims", "list_facts",
+    "list_traits", "list_metrics", "list_segments", "list_action_datasets",
+    "list_action_dataset_columns", "list_feature_stores", "list_destinations",
+    "list_syncs", "list_sync_run_history",
+    "search_traits", "show_trait",
+    # 可用函式清單 —— 建 trait / metric 前要先查
+    "list_aggr_functions", "list_compute_functions", "list_db_functions",
+    # 看資料與驗證結果
+    "get_segment_data", "get_trait_data", "get_action_dataset_data",
+    "get_feature_store_data", "get_profile",
+    # schema 重抓與啟動同步
+    "refresh_data_source_schema", "trigger_sync",
+})
+
+
+def eager_tools() -> frozenset[str] | None:
+    """哪些工具一開始就送出完整 schema。None = 全部延後。"""
+    raw = os.environ.get("SEGMA_EAGER_TOOLS", "").strip()
+    if not raw:
+        return EAGER_TOOLS
+    if raw.lower() == "none":
+        return None
+    return frozenset(n.strip() for n in raw.split(",") if n.strip())
+
+
+def _defer_non_eager(eager: frozenset[str] | None):
+    """回傳一個 prepare function,把不在 eager 清單裡的工具標成延後載入。
+
+    用 `.prepared()` 而不是 `.defer_loading(names)`,因為後者要「列出要延後的」,
+    而工具清單是 MCP server 開機時才知道的、還會長。反過來列 eager 的,新工具就
+    自動落在延後那邊——這是安全的方向。
+    """
+    async def prepare(_ctx: Any, tool_defs: list[Any]) -> list[Any]:
+        if eager is None:
+            return [replace(td, defer_loading=True) for td in tool_defs]
+        return [
+            td if td.name in eager else replace(td, defer_loading=True)
+            for td in tool_defs
+        ]
+
+    return prepare
+
+
 def build_agent(
     *,
     mcp_url: str,
@@ -69,6 +143,10 @@ def build_agent(
     temperature 預設 0:這是個「照工具建 CDP」的 agent,要的是可重現、每次一樣的動作,
     不是有創意的措辭,所以低溫最合適。gen_transcript 另外傳固定 seed,讓範例可重現。"""
     toolset = MCPToolset(mcp_url, headers={"Authorization": f"Bearer {token}"}, verify=verify)
+    # 只有 eager 清單裡的工具一開始就送 schema,其餘標成延後載入,由 tool search 撈。
+    # 這一步放在 approval 包裝**之前**:延後只影響「schema 何時送」,呼叫時仍然會經過
+    # ApprovalRequiredToolset,所以事後才被搜出來的破壞性工具照樣要按確認。
+    toolset = toolset.prepared(_defer_non_eager(eager_tools()))
     provider_kwargs: dict[str, Any] = {"api_key": api_key}
     if base_url:
         provider_kwargs["base_url"] = base_url
