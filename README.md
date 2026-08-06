@@ -124,13 +124,47 @@ pydantic-ai 的 `agent.iter` **邊跑邊顯示**:每個工具 ⏳ 開始 → ✅
 segma-mcp 有 152 個工具。工具定義是**每一輪都重送**的,而這裡走 OpenAI API,是真的
 計費的那條路(本機 Claude Code 走 Tool Search,不付這筆)。
 
-實測 `OpenAIChatModel` 真正送出的 `tools[]`(攔 HTTP request body 量的,不是估的):
+### 先講最重要的:超過 128 個工具,OpenAI 直接回 400
+
+```
+400 invalid_request_error — Invalid 'tools': array too long.
+Expected an array with maximum length 128, but got an array with length 152 instead.
+```
+
+**所以在延後載入之前,這個 app 的每一個 request 都是失敗的**(不是變慢,是完全不能用)。
+`examples/` 最後一次真實產生是 2026-07-27,那時工具數還在上限內;`b4a7ec1d`
+(2026-08-05)加上 14 個 `batch_destroy_*` 之後是 152,而在那之前就已經是 138。
+也就是這條路在 2026-07-27 到 08-05 之間某個時點壞掉,沒有人發現。
+
+這也是為什麼 eager 清單**不只是成本設定,而是功能的一部分**:清單長度加上
+`search_tools` 必須留在 128 以內。有測試守著(`test_eager_set_stays_under_the_openai_tool_cap`)。
+
+### 實測
+
+攔真正的 HTTP request body 量 `tools[]`(不是估的):
 
 | 設定 | 送出工具數 | tokens / 每一輪 |
 |---|---|---|
-| 全部送(2026-08-06 之前) | 152 | 50,332 |
+| 全部送(改之前) | 152 | 50,332 —— **但 OpenAI 直接 400** |
 | `EAGER_TOOLS` 內建清單(預設) | 36 | **27,536(−45.3%)** |
 | `SEGMA_EAGER_TOOLS=none` | 1 | 187(−99.6%) |
+
+再用**真的 gpt-4o** 跑同一個任務(建一個事件彙總標籤 + 一個用它的分群,查資料庫確認
+真的建出來),每個設定 3 次:
+
+| 設定 | 完成 | requests | 工具呼叫 | search | input tokens | 成本 |
+|---|---|---|---|---|---|---|
+| 全部送 | **0/3** | — | — | — | — | 400,連一次都沒送出去 |
+| `EAGER_TOOLS`(預設) | **3/3** | 4–5 | 5 | 0 | 101k–126k | **$0.26–0.32** |
+| 不含 `create_*` | 3/3 | 6–9 | 7–9 | 1 | 127k–154k | $0.32–0.39 |
+| `none` | **0/3** | 5–6 | 8–10 | 2 | 48k–62k | 便宜但沒做完 |
+
+**結論:預設的 eager 清單就是最好的,兩種更激進的設定都實測比它差。**
+
+- **不含 `create_*`**:3/3 會做完,但每次都多一輪搜尋、多 1–4 個 request、token 多約
+  25%。省下的 schema 抵不過多出來的往返 —— 不要延後 `create_*`。
+- **`none`**:0/3。agent 跳過 name→id 的查詢就直接呼叫 create,參數是猜的,後端回 500
+  (見 OPEN_ISSUES OI-142),它最後跑來問使用者要資料庫連線密碼。便宜是因為沒做完。
 
 **這是延後,不是過濾。** 沒被列進 eager 的工具標上 `defer_loading=True`,schema 不隨
 每一輪送出,但 agent 仍然可以透過 `search_tools` 自己撈進來——能力一個都沒少。所以
@@ -144,9 +178,10 @@ build-workflow.md`、以及 `examples/` 底下所有實錄 transcript 取聯集,
 延後**不會**繞過破壞性動作的確認閘門:延後只影響 schema 何時送,呼叫時仍然經過
 `ApprovalRequiredToolset`(有測試守著)。
 
-`none` 那一欄看起來最誘人,但它讓每一種資源第一次使用都要多一輪搜尋,而且**還沒有用真
-的 gpt-4o 跑過**——只驗證過 payload 真的縮小、`search_tools` 真的被提供。要換成 `none`
-之前先跑一次真實流程確認搜尋找得到東西。
+`search_tools` 本身是有效的(不含 `create_*` 那組 3/3 都靠它找到 `create_trait` /
+`create_segment` 並成功建出來),所以延後不是「找不到」的問題;`none` 的失敗是 agent
+連 name→id 的查詢都跳過。要再往下砍之前,先解決的是**提示詞要求它先查再建**,而不是
+工具清單。
 
 ## 回歸測試
 

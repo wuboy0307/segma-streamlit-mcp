@@ -204,6 +204,32 @@ def test_every_eager_tool_is_non_destructive():
     assert unexpected == set(), unexpected
 
 
+OPENAI_MAX_TOOLS = 128
+
+
+def test_eager_set_stays_under_the_openai_tool_cap():
+    """OpenAI 拒收超過 128 個工具的 request —— 這是 400,不是變慢。
+
+    2026-08-06 實測(真的打 gpt-4o):送全部 152 個工具時 OpenAI 直接回
+
+        400 invalid_request_error — Invalid 'tools': array too long.
+        Expected an array with maximum length 128, but got an array with
+        length 152 instead.
+
+    也就是說在延後載入之前,這個 app 的每一個 request 都是失敗的。所以這份 eager
+    清單不只是成本設定,它是功能的一部分:清單長度加上 search_tools 必須留在上限
+    之內,而且要留餘裕給 segma-mcp 之後新增的工具(新工具會自動落在延後那邊,不會
+    自己擠進 eager,但有人手動加就會)。
+    """
+    assert len(EAGER_TOOLS) + 1 < OPENAI_MAX_TOOLS, (
+        f"eager {len(EAGER_TOOLS)} + search_tools 逼近 OpenAI 的 {OPENAI_MAX_TOOLS} 上限"
+    )
+    # 留一半以上的餘裕:這份清單是手動維護的,不該長到接近上限。
+    assert len(EAGER_TOOLS) <= OPENAI_MAX_TOOLS // 2, (
+        f"eager 清單 {len(EAGER_TOOLS)} 個太長了,重新檢視哪些真的需要每輪送"
+    )
+
+
 def test_deferred_schemas_never_reach_the_wire():
     """這條才是真正的主張:延後的工具 schema **沒有被送出去**。
 
@@ -296,6 +322,7 @@ if __name__ == "__main__":
                test_eager_tools_are_sent_up_front_and_the_rest_deferred,
                test_none_defers_everything, test_deferring_removes_no_tool,
                test_eager_tools_env_override, test_every_eager_tool_is_non_destructive,
+               test_eager_set_stays_under_the_openai_tool_cap,
                test_deferred_schemas_never_reach_the_wire,
                test_a_deferred_destructive_tool_is_still_gated]:
         fn()
