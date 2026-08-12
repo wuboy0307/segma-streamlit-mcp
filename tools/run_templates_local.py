@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -100,6 +101,57 @@ RESOURCE_TYPES = [
 ]
 
 
+# Reverse dependency order: a segment references traits and metrics, a trait
+# references a fact and a dim, and those reference a data source. Deleting the
+# other way round just collects `restrict_with_error`.
+DELETE_ORDER = [
+    "syncs", "feature_stores", "action_datasets", "segments",
+    "metrics", "traits", "facts", "dims", "destinations", "data_sources",
+]
+
+
+def wipe_prefix(api_base: str, token: str, prefix: str) -> dict[str, int]:
+    """Delete this session's own resources so the run has to create them again.
+
+    Without it the turns are idempotent against artefacts an earlier example run
+    left behind — the agent finds `b_客戶` already there, correctly declines to
+    make a second one, and the report shows "no resource change" for a template
+    that works. Only the session prefixes are touched; `mcpdemo_` is the shared
+    demo CDP other eval cases build on and is never in scope here.
+    """
+    assert prefix and prefix != "mcpdemo_", f"refusing to wipe prefix {prefix!r}"
+    removed: dict[str, int] = {}
+    with httpx.Client(base_url=api_base, verify=False, timeout=60.0,
+                      headers={"Authorization": f"Bearer {token}",
+                               "Content-Type": "application/json"}) as client:
+        for rtype in DELETE_ORDER:
+            try:
+                r = client.post(f"/{rtype}/search",
+                                json={"q": {"name_start": prefix}, "limit": 100})
+                if r.status_code != 200:
+                    continue
+                for row in r.json().get("data", []):
+                    d = client.delete(f"/{rtype}/{row['id']}")
+                    if d.status_code < 300:
+                        removed[rtype] = removed.get(rtype, 0) + 1
+            except httpx.HTTPError:
+                continue
+    return removed
+
+
+def session_prefix(raw_turns: list) -> str | None:
+    """The prefix this turns file creates under, from its own fill values."""
+    for item in raw_turns:
+        if not isinstance(item, dict):
+            continue
+        for value in (item.get("fill") or {}).values():
+            v = str(value).strip().strip("『』「」")
+            for pfx in NAME_PREFIXES:
+                if pfx != "mcpdemo_" and v.startswith(pfx):
+                    return pfx
+    return None
+
+
 def inventory(api_base: str, token: str) -> dict[str, set[int] | None]:
     """Ids per resource type, so a delta shows what appeared and disappeared.
 
@@ -147,15 +199,22 @@ def expected_names(raw_item: dict) -> list[str]:
     July, so the turn showed no change while working correctly. Checking the named
     record answers the real question: is it there, and did this run touch it.
     """
-    out = []
+    # Split on every separator and quote a fill can use, then keep only clean
+    # name-shaped tokens. Several fills are prose that MENTIONS resources —
+    # "『d_2022年總消費』介於 30000 到 999999999" is a condition description, not a
+    # name. Taking the whole value reported unfindable "names" that were really
+    # sentences, and those false alarms outnumbered the real misses.
+    tokens = []
     for value in (raw_item.get("fill") or {}).values():
-        v = str(value).strip().strip("『』「」\"\'")
-        # Only the session prefixes name resources these turns create. Taking
-        # every short fill value instead reported `amount`, `customer_id` and
-        # `credit_card.transaction_history` as missing resources — they are
-        # column and table names, and the false alarms buried the real ones.
-        if any(v.startswith(pfx) for pfx in NAME_PREFIXES) and len(v) <= 60:
-            out.append(v)
+        tokens.extend(re.split(r"[、,，;；\s『』「」\"']+", str(value)))
+    out = []
+    for token in tokens:
+        v = token.strip()
+        if not (2 <= len(v) <= 40):
+            continue
+        if not any(v.startswith(pfx) for pfx in NAME_PREFIXES):
+            continue
+        out.append(v)
     return sorted(set(out))
 
 
@@ -177,6 +236,28 @@ def find_named(api_base: str, token: str, name: str) -> list[tuple[str, int, str
     return hits
 
 
+def result_bytes(run) -> tuple[int, int]:
+    """(total chars of tool results, largest single result).
+
+    A turn costs far more input than the ~50k of tool definitions — the rest is
+    conversation history, and tool results are the part of it that grows. Sizing
+    them says whether the next saving is in the definitions or in what the tools
+    hand back.
+    """
+    total = biggest = 0
+    for event in run.raw_events:
+        if event.get("type") != "user":
+            continue
+        for block in (event.get("message") or {}).get("content", []):
+            if block.get("type") != "tool_result":
+                continue
+            body = block.get("content")
+            text = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
+            total += len(text)
+            biggest = max(biggest, len(text))
+    return total, biggest
+
+
 def tool_errors(run) -> list[str]:
     """Tool results that came back an error, read off the raw event stream."""
     found = []
@@ -195,8 +276,15 @@ def tool_errors(run) -> list[str]:
 
 def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
                 templates: dict, lang: str, max_turns: int, dry_run: bool,
-                secrets: dict | None = None) -> dict:
+                secrets: dict | None = None, fresh: bool = False) -> dict:
     raw = json.load(open(turns_path, encoding="utf-8"))
+    if fresh:
+        pfx = session_prefix(raw)
+        if pfx:
+            gone = wipe_prefix(api_base, token, pfx)
+            print(f"  (wiped {pfx!r}: {gone or 'nothing to remove'})")
+        else:
+            print("  (no session prefix found — nothing wiped)")
     if secrets:
         n = fill_secrets(raw, templates, lang, secrets)
         if n:
@@ -223,12 +311,44 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
         after = inventory(api_base, token)
 
         errors = tool_errors(run)
+        results_chars, biggest_result = result_bytes(run)
+        # Pair each tool_use id with the result that came back for it.
+        result_sizes: dict[str, int] = {}
+        error_ids: dict[str, bool] = {}
+        for event in run.raw_events:
+            if event.get("type") != "user":
+                continue
+            for block in (event.get("message") or {}).get("content", []):
+                if block.get("type") != "tool_result":
+                    continue
+                payload = block.get("content")
+                if isinstance(payload, list):
+                    payload = " ".join(
+                        b.get("text", "") for b in payload if isinstance(b, dict)
+                    )
+                result_sizes[block.get("tool_use_id", "")] = len(str(payload or ""))
+                error_ids[block.get("tool_use_id", "")] = bool(block.get("is_error"))
         changes, unknown = delta(before, after)
         named = {n: find_named(api_base, token, n) for n in wanted}
         missing = [n for n, hits in named.items() if not hits]
         row = {
             "label": label,
             "tool_calls": [t.name.removeprefix("mcp__segma__") for t in run.tool_calls],
+            # Arguments too, truncated. A turn that creates the same resource
+            # twice is the expensive shape, and only the arguments say what the
+            # agent changed on the retry — which is what a tool description would
+            # have to state up front to save the round trip.
+            # …and the SIZE of what each one returned. Without it a report can
+            # rank turns by cost but not say which call carried it, and the
+            # first attempt at trimming payloads was aimed by guesswork
+            # because this column was all zeros.
+            "calls_detail": [
+                {"tool": t.name.removeprefix("mcp__segma__"),
+                 "args": json.dumps(t.input, ensure_ascii=False)[:400],
+                 "result_chars": result_sizes.get(getattr(t, "id", ""), 0),
+                 "is_error": error_ids.get(getattr(t, "id", ""), False)}
+                for t in run.tool_calls
+            ],
             "errors": errors,
             "changes": changes,
             "is_error": run.is_error,
@@ -237,6 +357,8 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
             "unreadable_types": unknown,
             "turns": run.num_turns,
             "input_tokens": run.input_tokens,
+            "result_chars": results_chars,
+            "biggest_result_chars": biggest_result,
             "output_tokens": (run.usage or {}).get("output_tokens"),
             "cost_usd": run.cost_usd,
             "seconds": round(time.time() - t0, 1),
@@ -269,6 +391,10 @@ def main() -> int:
     ap.add_argument("--app", default=str(REPO / "streamlit_app.py"))
     ap.add_argument("--max-turns", type=int, default=40)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--fresh", action="store_true",
+                    help="delete each session's own prefixed resources first, so the "
+                         "run has to create them and creation is actually verified. "
+                         "Never touches mcpdemo_.")
     ap.add_argument("--out", default=str(REPO / "tools" / "template_run_report.json"))
     ap.add_argument("--secrets-from",
                     default=str(REPO.parent / "segma-backend/spec/e2e/config/data_sources.yml"),
@@ -291,7 +417,8 @@ def main() -> int:
           f"{'loaded' if secrets else 'NOT FOUND — connect templates will report unfilled'}")
 
     sessions = [run_session(f, mcp_url, token, api_base, templates, args.lang,
-                            args.max_turns, args.dry_run, secrets) for f in files]
+                            args.max_turns, args.dry_run, secrets, args.fresh)
+                for f in files]
 
     if not args.dry_run:
         rows = [t for s in sessions for t in s["turns"]]
@@ -309,8 +436,14 @@ def main() -> int:
             total_in = sum(t["input_tokens"] for t in priced)
             print(f"\ntokens per template (input, descending) — total {total_in:,} "
                   f"over {len(priced)} turns, mean {total_in // len(priced):,}:")
+            print(f"  {'in-tok':>9} {'calls':>6} {'result chars':>13} {'biggest':>9}  template")
             for t in sorted(priced, key=lambda x: -x["input_tokens"]):
-                print(f"  {t['input_tokens']:>9,}  {len(t['tool_calls']):>2} calls  {t['label']}")
+                print(f"  {t['input_tokens']:>9,} {len(t['tool_calls']):>6} "
+                      f"{t.get('result_chars', 0):>13,} {t.get('biggest_result_chars', 0):>9,}  "
+                      f"{t['label']}")
+            tot_res = sum(t.get("result_chars", 0) for t in priced)
+            print(f"\ntool results totalled {tot_res:,} chars (~{tot_res // 4:,} tok) across "
+                  f"{len(priced)} turns — compare with {total_in:,} input tokens billed")
         Path(args.out).write_text(json.dumps(sessions, ensure_ascii=False, indent=2))
         print(f"wrote {args.out}")
     return 0
