@@ -460,17 +460,28 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
             # session, so turn 1 does not settle it for turns 2..n.
             "model": served,
             "tool_calls": [t.name.removeprefix("mcp__segma__") for t in run.tool_calls],
-            # Arguments too, truncated. A turn that creates the same resource
-            # twice is the expensive shape, and only the arguments say what the
-            # agent changed on the retry — which is what a tool description would
-            # have to state up front to save the round trip.
+            # Arguments too. A turn that creates the same resource twice is the
+            # expensive shape, and only the arguments say what the agent changed
+            # on the retry — which is what a tool description would have to
+            # state up front to save the round trip.
             # …and the SIZE of what each one returned. Without it a report can
             # rank turns by cost but not say which call carried it, and the
             # first attempt at trimming payloads was aimed by guesswork
             # because this column was all zeros.
+            #
+            # A call that ERRORED keeps its arguments in full. Truncating those
+            # at 400 characters cost a root cause on 2026-08-12: a create_trait
+            # answered 500, the retry succeeded, and the only difference visible
+            # inside the cut was one added field — which turned out not to be
+            # the trigger at all. The payload that would have settled it was
+            # past the cut, and by the time that was noticed the backend log was
+            # unreadable too, so the defect could not be explained. The failing
+            # call is exactly the one worth keeping whole.
             "calls_detail": [
                 {"tool": t.name.removeprefix("mcp__segma__"),
-                 "args": json.dumps(t.input, ensure_ascii=False)[:400],
+                 "args": (json.dumps(t.input, ensure_ascii=False)
+                          if error_ids.get(getattr(t, "id", ""), False)
+                          else json.dumps(t.input, ensure_ascii=False)[:400]),
                  "result_chars": result_sizes.get(getattr(t, "id", ""), 0),
                  "is_error": error_ids.get(getattr(t, "id", ""), False)}
                 for t in run.tool_calls
