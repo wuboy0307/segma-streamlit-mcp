@@ -5,4 +5,8 @@ __pycache__/
 .env
 .env.local
 .streamlit/secrets.toml
-tools/template_run_report.json
+# Run artefacts. Wildcard because `--out` names a report per turns file
+# (template_run_report_s05.json and friends), and only the default name was
+# ignored — the rest showed up as untracked and were one `git add -A` from
+# being committed.
+tools/template_run_report*.json

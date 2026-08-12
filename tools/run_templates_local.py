@@ -37,6 +37,9 @@ sys.path.insert(0, str(MCP_REPO))
 import httpx  # noqa: E402
 
 from gen_transcript import load_mcp, load_prompt_templates, resolve_turns  # noqa: E402
+from template_expectations import (  # noqa: E402
+    check_categories_mapped, expected_type, wrong_type,
+)
 from tests.prompt_eval.agent import run_agent  # noqa: E402
 
 # Sensitive connection values are deliberately absent from the committed turns
@@ -104,13 +107,26 @@ RESOURCE_TYPES = [
 # Reverse dependency order: a segment references traits and metrics, a trait
 # references a fact and a dim, and those reference a data source. Deleting the
 # other way round just collects `restrict_with_error`.
+#
+# traits BEFORE metrics: `Trait belongs_to :metric` (that is `trait_type:
+# 'metric'`) and `Metric has_many :traits, dependent: :restrict_with_error`, so
+# a metric still wrapped by a trait cannot go first. These turns do build such a
+# trait, and with metrics first the refusal cascades — dim blocked by the
+# metric, data source blocked by the dim — leaving a wipe that reports success
+# and removed almost nothing.
+#
+# Established from the model definitions, not from the incident that prompted
+# the look: the partial wipe on 2026-08-12 had a different cause (a leftover
+# `replay_` segment holding the same metric), and re-ordering did not resolve
+# it. Worth stating plainly, because "changed X, symptom gone" is the story
+# this comment would otherwise imply, and that story would be false.
 DELETE_ORDER = [
     "syncs", "feature_stores", "action_datasets", "segments",
-    "metrics", "traits", "facts", "dims", "destinations", "data_sources",
+    "traits", "metrics", "facts", "dims", "destinations", "data_sources",
 ]
 
 
-def wipe_prefix(api_base: str, token: str, prefix: str) -> dict[str, int]:
+def wipe_prefix(api_base: str, token: str, prefix: str) -> tuple[dict[str, int], list[str]]:
     """Delete this session's own resources so the run has to create them again.
 
     Without it the turns are idempotent against artefacts an earlier example run
@@ -118,6 +134,14 @@ def wipe_prefix(api_base: str, token: str, prefix: str) -> dict[str, int]:
     make a second one, and the report shows "no resource change" for a template
     that works. Only the session prefixes are touched; `mcpdemo_` is the shared
     demo CDP other eval cases build on and is never in scope here.
+
+    Returns (removed, survivors). The survivors half is not optional detail: a
+    failed DELETE (`restrict_with_error` from a dependant this pass did not
+    reach, a permission refusal) used to be swallowed, so the run announced
+    `wiped 'b_'` while three resources were still standing — and the turns that
+    then found their resource already present were indistinguishable, in the
+    report, from turns that created it. That is the very confusion `--fresh`
+    exists to remove, so a partial wipe has to say so out loud.
     """
     assert prefix and prefix != "mcpdemo_", f"refusing to wipe prefix {prefix!r}"
     removed: dict[str, int] = {}
@@ -136,7 +160,22 @@ def wipe_prefix(api_base: str, token: str, prefix: str) -> dict[str, int]:
                         removed[rtype] = removed.get(rtype, 0) + 1
             except httpx.HTTPError:
                 continue
-    return removed
+
+        # Read back rather than trust the delete responses — the question is
+        # what is still there, and only a re-read answers that.
+        survivors = []
+        for rtype in DELETE_ORDER:
+            try:
+                r = client.post(f"/{rtype}/search",
+                                json={"q": {"name_start": prefix}, "limit": 100})
+                if r.status_code != 200:
+                    survivors.append(f"{rtype}:unreadable")
+                    continue
+                for row in r.json().get("data", []):
+                    survivors.append(f"{rtype}#{row['id']} {row.get('name')}")
+            except httpx.HTTPError:
+                survivors.append(f"{rtype}:unreadable")
+    return removed, survivors
 
 
 def session_prefix(raw_turns: list) -> str | None:
@@ -152,18 +191,27 @@ def session_prefix(raw_turns: list) -> str | None:
     return None
 
 
-def inventory(api_base: str, token: str) -> dict[str, set[int] | None]:
-    """Ids per resource type, so a delta shows what appeared and disappeared.
+def inventory(api_base: str, token: str) -> dict[str, dict[int, str] | None]:
+    """{id: name} per resource type, so a delta shows what appeared and disappeared.
 
     Uses the search endpoint: the plain index paginates, and a page-1 read would
     miss a freshly created record and report it as never created.
 
-    A type that could not be read becomes None, NOT an empty set. Swallowing the
-    error into `set()` made a transient backend 500 look like "399 traits were
+    A type that could not be read becomes None, NOT an empty dict. Swallowing the
+    error into `{}` made a transient backend 500 look like "399 traits were
     deleted" — a fabricated catastrophe in the report while the database was
     untouched. Unknown must stay distinguishable from empty.
+
+    Names, not just ids, because this stack is shared. The inventory is taken over
+    the WHOLE backend, so anything a parallel session creates between the two
+    reads is attributed to whichever turn was running. That is not hypothetical:
+    on 2026-08-12 a turn building a trait was reported as `destinations:+1`, and
+    the destination was another session's `probe-verify-0812`. Filtering by
+    prefix would be wrong — the real turns also create unprefixed records, such as
+    the 15 traits a dim generates from its columns — so the report names what
+    appeared and lets the reader see it was not ours.
     """
-    out: dict[str, set[int] | None] = {}
+    out: dict[str, dict[int, str] | None] = {}
     with httpx.Client(base_url=api_base, verify=False, timeout=60.0,
                       headers={"Authorization": f"Bearer {token}",
                                "Content-Type": "application/json"}) as client:
@@ -171,7 +219,8 @@ def inventory(api_base: str, token: str) -> dict[str, set[int] | None]:
             try:
                 r = client.post(f"/{rtype}/search", json={"q": {}, "limit": 500})
                 r.raise_for_status()
-                out[rtype] = {row["id"] for row in r.json().get("data", [])}
+                out[rtype] = {row["id"]: str(row.get("name") or "")
+                              for row in r.json().get("data", [])}
             except (httpx.HTTPError, ValueError):
                 out[rtype] = None
     return out
@@ -185,9 +234,14 @@ def delta(before: dict, after: dict) -> tuple[dict[str, dict], list[str]]:
         if b is None or a is None:
             unknown.append(rtype)
             continue
-        created, deleted = sorted(a - b), sorted(b - a)
+        created, deleted = sorted(set(a) - set(b)), sorted(set(b) - set(a))
         if created or deleted:
-            changed[rtype] = {"created": created, "deleted": deleted}
+            changed[rtype] = {
+                "created": created,
+                "deleted": deleted,
+                "created_names": [a.get(i, "") for i in created],
+                "deleted_names": [b.get(i, "") for i in deleted],
+            }
     return changed, unknown
 
 
@@ -274,15 +328,75 @@ def tool_errors(run) -> list[str]:
     return found
 
 
+def model_used(run) -> str | None:
+    """The model the run ACTUALLY used, read off its own init event.
+
+    Not the string that was passed in. Passing `--model` and then recording the
+    variable you passed produces a report that cannot disagree with you — the
+    A/B on 2026-08-12 mislabelled every row exactly this way, because each row
+    carried the loop variable rather than what the service was running. A
+    mistyped or unavailable alias silently falls back, and a fallback that
+    reports itself as the weak model is a measurement of the wrong thing.
+    """
+    for event in run.raw_events:
+        if event.get("type") == "system" and event.get("model"):
+            return event["model"]
+    return None
+
+
+def check_model(requested: str | None, served: str | None) -> str | None:
+    """Complaint text if the run did not use the model that was asked for.
+
+    A full id (`claude-haiku-4-5-20251001`) has to come back verbatim; a short
+    alias (`haiku`) only has to appear in what came back, since the CLI expands
+    it to a dated id. Either way the comparison is against the served string —
+    the point is to catch a silent fallback, which otherwise produces a run
+    labelled "weak model" that was nothing of the sort.
+    """
+    if not requested:
+        return None
+    if not served:
+        return f"asked for {requested!r} but the run never reported a model"
+    if requested.startswith("claude-"):
+        return None if served == requested else f"asked for {requested!r}, ran {served!r}"
+    return None if requested in served else f"asked for {requested!r}, ran {served!r}"
+
+
 def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
                 templates: dict, lang: str, max_turns: int, dry_run: bool,
-                secrets: dict | None = None, fresh: bool = False) -> dict:
+                secrets: dict | None = None, fresh: bool = False,
+                model: str | None = None, out_path: Path | None = None,
+                all_sessions: list | None = None) -> dict:
     raw = json.load(open(turns_path, encoding="utf-8"))
+    unmapped = check_categories_mapped(raw)
+    if unmapped:
+        raise SystemExit(
+            f"{turns_path.name}: no expected resource type for {unmapped} — add them to "
+            "CATEGORY_EXPECTS (None if the category only reads). Left unmapped, the "
+            "wrong-type check quietly skips those turns and they read as passes."
+        )
     if fresh:
         pfx = session_prefix(raw)
         if pfx:
-            gone = wipe_prefix(api_base, token, pfx)
+            gone, left = wipe_prefix(api_base, token, pfx)
             print(f"  (wiped {pfx!r}: {gone or 'nothing to remove'})")
+            if left:
+                # Loud, because every downstream "no resource change" for one of
+                # these means "it was already there", not "the template did
+                # nothing" — and the two look identical in the table.
+                print(f"  !! {len(left)} {pfx!r} resource(s) SURVIVED the wipe — turns "
+                      f"touching them are NOT measuring creation:")
+                for s in left:
+                    print(f"       {s}")
+                # Say what to do, not just that it went wrong — the same rule
+                # this project applies to its own agent-facing errors. The usual
+                # cause is another turns file building on top of this one: a
+                # `d_` dim sitting on the `b_` data source keeps that data source
+                # undeletable, and no amount of re-running THIS prefix helps.
+                others = [p for p in NAME_PREFIXES if p not in (pfx, "mcpdemo_")]
+                print(f"     -> most often another turns file's resources are built on "
+                      f"top of these. Wipe {', '.join(repr(p) for p in others)} first, "
+                      f"then {pfx!r} again, and re-run.")
         else:
             print("  (no session prefix found — nothing wiped)")
     if secrets:
@@ -292,7 +406,9 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
     resolved = resolve_turns(raw, templates, lang)
     print(f"\n=== {turns_path.name}: {len(resolved)} turns ===", flush=True)
 
-    session = {"file": turns_path.name, "turns": []}
+    session = {"file": turns_path.name, "model_requested": model, "turns": []}
+    if all_sessions is not None:
+        all_sessions.append(session)
     if dry_run:
         for label, prompt in resolved:
             print(f"  [resolved] {label}: {prompt[:70].replace(chr(10), ' ')}…")
@@ -306,7 +422,7 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
         before = inventory(api_base, token)
         t0 = time.time()
         run = run_agent(prompt, mcp_url, token, max_turns=max_turns,
-                        resume_session=claude_session)
+                        resume_session=claude_session, model=model)
         claude_session = run.session_id or claude_session
         after = inventory(api_base, token)
 
@@ -331,8 +447,18 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
         changes, unknown = delta(before, after)
         named = {n: find_named(api_base, token, n) for n in wanted}
         missing = [n for n, hits in named.items() if not hits]
+        served = model_used(run)
+        named_types = {n: [f"{t}#{i}" for t, i, _ in h] for n, h in named.items()}
+        mistyped = wrong_type(
+            expected_type(raw_items[i - 1]) if i - 1 < len(raw_items) else None,
+            named_types,
+        )
         row = {
             "label": label,
+            # What ran, read back — see model_used(). Kept per turn rather than
+            # per session because `--resume` carries the model from the resumed
+            # session, so turn 1 does not settle it for turns 2..n.
+            "model": served,
             "tool_calls": [t.name.removeprefix("mcp__segma__") for t in run.tool_calls],
             # Arguments too, truncated. A turn that creates the same resource
             # twice is the expensive shape, and only the arguments say what the
@@ -354,6 +480,7 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
             "is_error": run.is_error,
             "named_present": {n: [f"{t}#{i}" for t, i, _ in h] for n, h in named.items()},
             "named_missing": missing,
+            "wrong_type": mistyped,
             "unreadable_types": unknown,
             "turns": run.num_turns,
             "input_tokens": run.input_tokens,
@@ -364,22 +491,46 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
             "seconds": round(time.time() - t0, 1),
         }
         session["turns"].append(row)
+        # Flush after EVERY turn, not once at the end. A 16-turn run stopped at
+        # turn 15 on 2026-08-12 wrote nothing at all, and the per-call
+        # trajectories — the whole reason the run was made — were gone; only
+        # what had scrolled past on the console survived. A run this long is
+        # exactly the one that gets interrupted, so its output cannot be
+        # all-or-nothing.
+        if out_path is not None and all_sessions is not None:
+            out_path.write_text(json.dumps(all_sessions, ensure_ascii=False, indent=2))
+
+        def named_delta(v):
+            # Name the first few, so a record this session did not create is
+            # recognisable on the line rather than only in the JSON.
+            shown = ", ".join(n for n in v.get("created_names", [])[:3] if n)
+            more = len(v["created"]) - 3
+            return f" ({shown}{f' +{more}' if more > 0 else ''})" if shown else ""
 
         summary = ", ".join(
-            f"{rt}:+{len(v['created'])}" + (f"/-{len(v['deleted'])}" if v["deleted"] else "")
+            f"{rt}:+{len(v['created'])}{named_delta(v)}"
+            + (f"/-{len(v['deleted'])}" if v["deleted"] else "")
             for rt, v in changes.items()
         ) or "no resource change"
         if unknown:
             summary += f"  (could not read: {', '.join(unknown)})"
         if missing:
             summary += f"  MISSING: {', '.join(missing)}"
-        flag = "ERR " if (errors or run.is_error or missing) else "ok  "
+        if mistyped:
+            summary += f"  WRONG TYPE: {mistyped}"
+        flag = "ERR " if (errors or run.is_error or missing or mistyped) else "ok  "
         tok = f"{row['input_tokens']:,}" if row["input_tokens"] else "?"
         print(f"  {flag}[{i}/{len(resolved)}] {label[:40]:<40} "
               f"{len(row['tool_calls']):>2} calls  {row['seconds']:>5.1f}s  "
               f"{tok:>9} in-tok  {summary}", flush=True)
         for e in errors[:2]:
             print(f"        error: {e[:160]}", flush=True)
+        # Abort rather than carry on: a run measured against the wrong model is
+        # not a weaker result, it is a different experiment, and it is
+        # indistinguishable from a good one once it is in the report.
+        complaint = check_model(model, served)
+        if complaint:
+            raise SystemExit(f"model mismatch on turn {i} ({label}): {complaint}")
     return session
 
 
@@ -400,6 +551,11 @@ def main() -> int:
                     default=str(REPO.parent / "segma-backend/spec/e2e/config/data_sources.yml"),
                     help="gitignored warehouse credentials, for the connect templates")
     ap.add_argument("--secrets-type", default="postgres")
+    ap.add_argument("--model", default=None,
+                    help="model for the agent, e.g. claude-haiku-4-5-20251001 — the "
+                         "weak-model stand-in these measurements are supposed to use. "
+                         "Omitted means whatever `claude -p` defaults to, which is "
+                         "stronger and not comparable with a weak-model baseline.")
     args = ap.parse_args()
 
     files = [Path(p) for p in args.turns]
@@ -409,20 +565,25 @@ def main() -> int:
     templates = load_prompt_templates(args.app)
     mcp_url, token = load_mcp()
     api_base = mcp_url.rstrip("/").removesuffix("/mcp") + "/api/v1"
-    print(f"mcp={mcp_url}  turns files={len(files)}  lang={args.lang}"
+    print(f"mcp={mcp_url}  turns files={len(files)}  lang={args.lang}  "
+          f"model={args.model or 'DEFAULT (not the weak-model baseline)'}"
           f"{'  (dry run)' if args.dry_run else ''}")
 
     secrets = load_secrets(Path(args.secrets_from), args.secrets_type)
     print(f"connection secrets for {args.secrets_type!r}: "
           f"{'loaded' if secrets else 'NOT FOUND — connect templates will report unfilled'}")
 
-    sessions = [run_session(f, mcp_url, token, api_base, templates, args.lang,
-                            args.max_turns, args.dry_run, secrets, args.fresh)
-                for f in files]
+    out_path = None if args.dry_run else Path(args.out)
+    sessions: list = []
+    for f in files:
+        run_session(f, mcp_url, token, api_base, templates, args.lang,
+                    args.max_turns, args.dry_run, secrets, args.fresh,
+                    args.model, out_path, sessions)
 
     if not args.dry_run:
         rows = [t for s in sessions for t in s["turns"]]
-        bad = [t for t in rows if t.get("errors") or t.get("is_error") or t.get("named_missing")]
+        bad = [t for t in rows if t.get("errors") or t.get("is_error")
+               or t.get("named_missing") or t.get("wrong_type")]
         touched = [t for t in rows if t.get("changes")]
         print(f"\n{len(rows)} template turns: {len(rows) - len(bad)} clean, {len(bad)} with errors; "
               f"{len(touched)} changed backend state")
@@ -444,7 +605,8 @@ def main() -> int:
             tot_res = sum(t.get("result_chars", 0) for t in priced)
             print(f"\ntool results totalled {tot_res:,} chars (~{tot_res // 4:,} tok) across "
                   f"{len(priced)} turns — compare with {total_in:,} input tokens billed")
-        Path(args.out).write_text(json.dumps(sessions, ensure_ascii=False, indent=2))
+        # Already written after each turn; this is the final consistent copy.
+        out_path.write_text(json.dumps(sessions, ensure_ascii=False, indent=2))
         print(f"wrote {args.out}")
     return 0
 
