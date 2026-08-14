@@ -493,6 +493,7 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
             "named_missing": missing,
             "wrong_type": mistyped,
             "unreadable_types": unknown,
+            "foreign_tools": run.foreign_tools,
             "turns": run.num_turns,
             "input_tokens": run.input_tokens,
             "result_chars": results_chars,
@@ -529,7 +530,14 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
             summary += f"  MISSING: {', '.join(missing)}"
         if mistyped:
             summary += f"  WRONG TYPE: {mistyped}"
-        flag = "ERR " if (errors or run.is_error or missing or mistyped) else "ok  "
+        # A turn that spent its budget on a tool that is not segma's measured
+        # nothing about segma, and without this it is recorded as a turn with no
+        # segma calls — which reads as "the server refused the work", the
+        # opposite conclusion. See agent.py's denylist.
+        if run.foreign_tools:
+            summary += f"  !! NOT SEGMA TOOLS: {', '.join(run.foreign_tools)} — run is INVALID"
+        flag = ("ERR " if (errors or run.is_error or missing or mistyped
+                           or run.foreign_tools) else "ok  ")
         tok = f"{row['input_tokens']:,}" if row["input_tokens"] else "?"
         print(f"  {flag}[{i}/{len(resolved)}] {label[:40]:<40} "
               f"{len(row['tool_calls']):>2} calls  {row['seconds']:>5.1f}s  "
@@ -594,7 +602,8 @@ def main() -> int:
     if not args.dry_run:
         rows = [t for s in sessions for t in s["turns"]]
         bad = [t for t in rows if t.get("errors") or t.get("is_error")
-               or t.get("named_missing") or t.get("wrong_type")]
+               or t.get("named_missing") or t.get("wrong_type")
+               or t.get("foreign_tools")]
         touched = [t for t in rows if t.get("changes")]
         print(f"\n{len(rows)} template turns: {len(rows) - len(bad)} clean, {len(bad)} with errors; "
               f"{len(touched)} changed backend state")
