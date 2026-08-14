@@ -10,11 +10,11 @@ Agent 真跑一遍——所以這些記錄同時是**範本的驗證**:範本有
 
 | 檔案 | 內容 |
 |---|---|
-| [session-01-build.md](session-01-build.md) | **從零建一整條 CDP**(連接 → 分析主體 → 事件 → 指標 → 標籤含 derive → 分群 → 行動資料)。以 MySQL 當例子;其他方言差異見 dialect-notes。 |
+| [session-01-build.md](session-01-build.md) | **從零建一整條 CDP**(連接 → 分析主體 → 事件 → 指標 → 標籤含 derive → 分群 → 行動資料)。以 MySQL 當例子;其他方言差異見 `segma://guides/dialects`。 |
 | [session-02-activation.md](session-02-activation.md) | **啟用流程**:同步目的地 → 同步 → 特徵商店 → 即時查詢。文末記錄過程中發現的 4 個缺漏 + 修法。 |
 | [session-03-traits.md](session-03-traits.md) | **標籤(Trait)四種算法**:aggregation / compute / derive / sql,逐一在真實資料上建成。 |
 | [session-04-segments.md](session-04-segments.md) | **分群(Segment)**:指標門檻、eventCount 相對時間、eventAggr,再列出各群人數 / 拉名單。 |
-| [dialect-notes.md](dialect-notes.md) | **各方言差異與已知問題**:SQL Server / Oracle / Postgres / Greenplum / BigQuery 換方言要注意什麼,+ 過程中挖到的真 bug(已修 / open)。 |
+| *(已移出)* | **各方言差異與已知問題**現在由 MCP server 提供,讀取 `segma://guides/dialects` (檔案在 `segma-mcp/prompts/dialect-notes.md`)。它是給 agent 看的,所以放在 agent 拿得到的地方。 |
 
 > session-02 / 03 建在既有的 `mcpdemo_` 信用卡 demo 上(分析主體『mcpdemo_持卡人』+
 > 事件『mcpdemo_信用卡交易』);session-01 從空環境連一個新倉開始;session-04 建在 demo
