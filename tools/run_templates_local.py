@@ -453,6 +453,11 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
             expected_type(raw_items[i - 1]) if i - 1 < len(raw_items) else None,
             named_types,
         )
+        # Computed before the row so it can be stored with it: a turn whose only
+        # calls were schema loads never reached the product.
+        harness_only = bool(run.tool_calls) and all(
+            (c.name or '').lower().startswith('toolsearch') for c in run.tool_calls
+        )
         row = {
             "label": label,
             # What ran, read back — see model_used(). Kept per turn rather than
@@ -494,6 +499,7 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
             "wrong_type": mistyped,
             "unreadable_types": unknown,
             "foreign_tools": run.foreign_tools,
+            "harness_only": harness_only,
             "turns": run.num_turns,
             "input_tokens": run.input_tokens,
             "result_chars": results_chars,
@@ -536,8 +542,16 @@ def run_session(turns_path: Path, mcp_url: str, token: str, api_base: str,
         # opposite conclusion. See agent.py's denylist.
         if run.foreign_tools:
             summary += f"  !! NOT SEGMA TOOLS: {', '.join(run.foreign_tools)} — run is INVALID"
+        # A turn that only ever loaded schemas never reached the product, so it
+        # measured nothing about it — but "0 segma calls, resource missing" is
+        # exactly what a turn looks like when the server refused the work, and
+        # the two lead to opposite conclusions. Seen on 2026-08-12 (17 searches,
+        # 0 calls) and again on 2026-08-16 (12, 0), both times mid-measurement.
+        if harness_only:
+            summary += (f"  !! ONLY ToolSearch x{len(row['tool_calls'])}, never called a segma "
+                        f"tool — the agent did not reach the product; turn is INVALID")
         flag = ("ERR " if (errors or run.is_error or missing or mistyped
-                           or run.foreign_tools) else "ok  ")
+                           or run.foreign_tools or harness_only) else "ok  ")
         tok = f"{row['input_tokens']:,}" if row["input_tokens"] else "?"
         print(f"  {flag}[{i}/{len(resolved)}] {label[:40]:<40} "
               f"{len(row['tool_calls']):>2} calls  {row['seconds']:>5.1f}s  "
@@ -603,7 +617,7 @@ def main() -> int:
         rows = [t for s in sessions for t in s["turns"]]
         bad = [t for t in rows if t.get("errors") or t.get("is_error")
                or t.get("named_missing") or t.get("wrong_type")
-               or t.get("foreign_tools")]
+               or t.get("foreign_tools") or t.get("harness_only")]
         touched = [t for t in rows if t.get("changes")]
         print(f"\n{len(rows)} template turns: {len(rows) - len(bad)} clean, {len(bad)} with errors; "
               f"{len(touched)} changed backend state")
