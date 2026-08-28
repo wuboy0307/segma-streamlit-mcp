@@ -144,7 +144,18 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
                     help="verify the committed YAML still matches the app, write nothing")
+    ap.add_argument("--check-doc", action="store_true",
+                    help="verify only PROMPTS.md against the app; needs neither "
+                         "PyYAML nor the segma-mcp checkout, so CI can run it")
     args = ap.parse_args()
+
+    # Returns before `import yaml` and before anything reads OUT, on purpose.
+    # This half is the only one CI can run: the YAML being checked lives in
+    # segma-mcp, a different repository on a different host, and a CI job here
+    # checks out this repo alone. Keeping the doc check free of both
+    # dependencies is what lets it be a real gate rather than a skip.
+    if args.check_doc:
+        return check_prompts_md(read_templates())
 
     import yaml
 

@@ -1,0 +1,68 @@
+# Runs this repo's tests on every push and pull request.
+#
+# Until 2026-08-28 there was no CI here at all. `tests/` held two correct
+# files that exit non-zero on failure, and nothing invoked either of them —
+# not a pipeline, not a script, only a command a person had to type, and
+# `pytest` was not even installed in the checkout's own virtualenv. That is
+# the same state segma-mcp was in until 2026-08-19: a check that can fail but
+# never runs is worth what a check that cannot fail is worth.
+#
+# This is GitHub Actions rather than `.gitlab-ci.yml` because this repo alone
+# lives on GitHub; every other Segma repo is on gitlab.com/wavein. Putting a
+# GitLab config here would have added a file that never executes, which is the
+# failure this job exists to end.
+#
+# WHAT THIS JOB DOES NOT COVER, and what does instead
+# ---------------------------------------------------
+# `tests/test_prompt_templates_sync.py` is deliberately not run here. It
+# checks the app's PROMPT_TEMPLATES against `segma-mcp/prompts/templates.yaml`
+# — a sibling repository, private, and on a different host — so a job that
+# checks out this repo alone cannot see the file it needs. Running it anyway
+# would produce a skip or an error dressed up as a pass.
+#
+# So the cross-repo half is not gated by CI. What stands in for it:
+# `tools/extract_prompt_templates.py` verifies the round trip string for
+# string every time it regenerates the YAML, which is the moment the two
+# copies are actually written, and both repos' changes ship in one review.
+# Closing the gap properly needs a GitLab token in this repo's secrets so the
+# job can fetch that file; that is a credential decision, not a technical one,
+# and it has not been taken.
+#
+# The half that IS gated here is the one that was silently drifting: PROMPTS.md
+# against the app. It had 11 templates missing and 5 left at older wording
+# before anything checked it.
+
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # First, and before any install, because it needs nothing: --check-doc
+      # returns before the script imports PyYAML or looks at the sibling repo.
+      # A gate with no dependencies is a gate that cannot fail for a reason
+      # that has nothing to do with the code.
+      - name: PROMPTS.md still says what the app says
+        run: python tools/extract_prompt_templates.py --check-doc
+
+      # requirements.txt rather than a second list naming just what the test
+      # imports — a dependency list that only CI reads is one more thing to
+      # drift.
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Runs standalone; the file has its own __main__ and asserts plainly, so
+      # pytest is not needed and is not installed.
+      - name: agent_runtime unit tests
+        run: python tests/test_agent_runtime.py

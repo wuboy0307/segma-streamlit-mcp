@@ -1,3 +1,12 @@
 streamlit==1.52.0
-pydantic-ai-slim[openai,mcp]>=2.11.0
+# Pinned, not a floor. `>=2.11.0` resolved to 2.35.3 on a fresh install
+# (2026-08-28) and the confirmation gate stops working there: a destructive
+# tool the model asks for is neither executed NOR raised for approval — the
+# run just continues and answers as if it were done. Nothing is deleted, so
+# it is not a safety hole, but the user is told a thing happened that did
+# not. Every checkout in use is on 2.15.0, where all 13 agent_runtime tests
+# pass; the floor meant developers and a fresh install ran different code.
+# Raise this deliberately, with test_a_deferred_destructive_tool_is_still_gated
+# green, not by letting the resolver choose.
+pydantic-ai-slim[openai,mcp]==2.15.0
 openai>=2.0.0
