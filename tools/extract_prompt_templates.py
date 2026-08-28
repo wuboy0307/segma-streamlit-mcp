@@ -184,7 +184,99 @@ def main() -> int:
     print(f"{len(doc['categories'])} categories, {n} templates x 2 languages "
           f"= {len(got_sorted)} strings — round trip exact")
     print(f"{'checked' if args.check else 'wrote'} {OUT}")
-    return 0
+
+    # Two exit codes, because the two modes are asking different questions and
+    # a caller reacts differently. Under --check a stale PROMPTS.md is a
+    # FAILURE: the committed state is inconsistent. In write mode it is the
+    # EXPECTED half-way point — you have just added a template to the app and
+    # the doc cannot possibly know about it yet — so failing with 1 there would
+    # break `extract_prompt_templates.py && git add …` on the one run that is
+    # supposed to work, and teach people to ignore the message. The YAML was
+    # written either way; only the doc is outstanding.
+    doc = check_prompts_md(templates)
+    if doc and not args.check:
+        print("^ the YAML above was written correctly; this is the remaining "
+              "step, not a failed generation (exit 2).")
+        return 2
+    return doc
+
+
+# PROMPTS.md is the third copy of these strings — the human-readable one, and
+# the only one nothing generates. It is checked HERE rather than only in
+# tests/test_prompt_templates_sync.py because this script is the step the
+# workflow actually names: adding a template means editing the app and running
+# this, so this is the moment the omission can still be caught. Measured
+# 2026-08-28, before this existed: 11 templates missing from the doc and 5
+# whose text had been left at an older wording — including the whole sync
+# dedup / sort / retry batch added on 2026-08-19, where the YAML was
+# regenerated and the doc was not.
+BLOCK_RE = re.compile(r"^\*\*([^\n*]+)\*\*\n```\n(.*?)\n```", re.M | re.S)
+HEADING_RE = re.compile(r"^## (.+)$", re.M)
+
+
+def blocks_by_section(text: str):
+    """(heading, label, body) for every template block, with its `## ` section.
+
+    The heading is what makes a label unique, so it has to come out of the
+    document rather than be assumed from order.
+    """
+    heads = [(m.start(), m.group(1)) for m in HEADING_RE.finditer(text)]
+    for i, (pos, heading) in enumerate(heads):
+        end = heads[i + 1][0] if i + 1 < len(heads) else len(text)
+        for m in BLOCK_RE.finditer(text[pos:end]):
+            yield heading, m.group(1), m.group(2)
+
+
+def check_prompts_md(templates: dict) -> int:
+    """Every zh template appears in PROMPTS.md, in its own section, same text."""
+    doc_path = REPO / "PROMPTS.md"
+    if not doc_path.exists():
+        print(f"{doc_path} is missing")
+        return 1
+
+    # Keyed by (category, label), not by label alone. A label is only unique
+    # WITHIN its category — `Follow the source (follow_refresh)` is already
+    # carried by both `sync` and `feature_store`, identically, which is why
+    # their generated ids collide too — so flattening on the label would refuse
+    # a catalogue that is perfectly legal, and would do it the moment somebody
+    # tidied those two zh labels into the same wording. Duplicates are still
+    # rejected within one category, where they really would collapse a dict and
+    # let the check compare fewer things than it reports.
+    app = {}
+    for cat, items in templates["zh"].items():
+        for label, text in items:
+            if (cat, label) in app:
+                print(f"two templates in '{cat}' share the label {label!r}, so "
+                      "PROMPTS.md cannot be matched against them one for one. "
+                      "Rename one.")
+                return 1
+            app[(cat, label)] = text
+
+    md = {}
+    text = doc_path.read_text(encoding="utf-8")
+    for heading, block_label, block_text in blocks_by_section(text):
+        if (heading, block_label) in md:
+            print(f"PROMPTS.md carries the heading {block_label!r} twice under "
+                  f"'## {heading}'.")
+            return 1
+        md[(heading, block_label)] = block_text
+
+    missing = [l for l in app if l not in md]
+    extra = [l for l in md if l not in app]
+    differs = [l for l in md if l in app and md[l].strip() != app[l].strip()]
+
+    if not (missing or extra or differs):
+        print(f"PROMPTS.md carries all {len(app)} templates, text identical")
+        return 0
+
+    print(f"PROMPTS.md is out of step with streamlit_app.py "
+          f"({len(missing)} missing, {len(extra)} unknown, {len(differs)} reworded).")
+    print("It is written by hand — add the block under the matching `## ` heading, "
+          "or copy the new text into the existing one.")
+    for kind, rows in (("missing ", missing), ("unknown ", extra), ("reworded", differs)):
+        for cat, label in rows:
+            print(f"   {kind}: {label}   (## {cat})")
+    return 1
 
 
 if __name__ == "__main__":

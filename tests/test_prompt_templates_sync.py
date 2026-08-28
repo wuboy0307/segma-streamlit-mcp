@@ -10,6 +10,10 @@ This test is the guard. It runs the extractor in --check mode, which rebuilds
 the YAML in memory and compares every (category, label, text) triple in both
 languages against what is committed.
 
+--check also verifies the THIRD copy, `PROMPTS.md` — the human-readable one,
+which nothing generates and which had drifted 16 entries before that check
+existed. So a red run here can mean either copy; the output names which.
+
     .venv/bin/python -m pytest tests/test_prompt_templates_sync.py
 
 Editing a template? Change streamlit_app.py, then re-run
