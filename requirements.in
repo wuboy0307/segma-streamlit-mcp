@@ -2,19 +2,23 @@
 # requirements.txt — that one is generated from this one and holds the whole
 # resolved tree.
 #
-#   uv pip compile --universal --python-version 3.11 \
+#   uv pip compile --universal --python-version 3.11 --generate-hashes \
 #       --output-file requirements.txt requirements.in
 #
 # Run it after every edit here and commit both files together; CI regenerates
 # it and fails if the two disagree, so a forgotten run shows up as a red
 # build rather than as two machines running different code.
 #
-# Use the uv named below. The check compares the generated file byte for byte,
-# so a different uv can reorder a line or reword the header and turn a correct
-# change red. The workflow reads this line rather than repeating the number, so
-# bumping it here is the whole change — then recompile and commit both files.
+# The version and the flags both live here, in the two machine-readable lines
+# below, because the hook and CI both read them. Repeating either somewhere
+# else would need whoever changes it to remember the copy at the moment of
+# typing, which is the kind of rule that fails exactly when someone is busy.
+# The check compares the generated file byte for byte, so a different uv — or a
+# different flag — can reorder a line or reword the header and turn a correct
+# change red.
 #
 # uv-version: 0.10.9
+# uv-compile-args: --universal --python-version 3.11 --generate-hashes
 #
 # Recompiling in this directory keeps the existing requirements.txt as pinned
 # preferences, which is what you want: it re-resolves what your edit changed

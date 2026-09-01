@@ -93,12 +93,13 @@ jobs:
       # depending on what ran before it.
       - name: requirements.txt still matches requirements.in
         run: |
+          args=$(sed -n 's/^# uv-compile-args: *//p' requirements.in | head -1)
+          [ -n "$args" ] || { echo "::error::requirements.in has no '# uv-compile-args:' line"; exit 1; }
           rm -rf /tmp/lockcheck && mkdir -p /tmp/lockcheck
           cp requirements.in requirements.txt /tmp/lockcheck/
-          (cd /tmp/lockcheck && uv pip compile --universal --python-version 3.11 \
-             --output-file requirements.txt requirements.in)
+          (cd /tmp/lockcheck && uv pip compile $args --output-file requirements.txt requirements.in)
           diff -u requirements.txt /tmp/lockcheck/requirements.txt \
-            || { echo "::error::requirements.in changed without recompiling the lock. Run: uv pip compile --universal --python-version 3.11 --output-file requirements.txt requirements.in"; exit 1; }
+            || { echo "::error::requirements.in changed without recompiling the lock. Run: uv pip compile $args --output-file requirements.txt requirements.in"; exit 1; }
 
       # The lock, not the .in — CI must install exactly what the container
       # installs, which is this file.
