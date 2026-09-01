@@ -61,6 +61,30 @@ cp .env.example .env      # 然後編輯 .env 填入 LLM_API_KEY…
 .venv/bin/streamlit run streamlit_app.py
 ```
 
+### 要加或改相依套件
+
+`requirements.txt` 是**產物**,不要手改。改 `requirements.in`,然後重新產生:
+
+```bash
+uv pip compile --universal --python-version 3.11 \
+    --output-file requirements.txt requirements.in
+```
+
+兩個檔案一起 commit。CI 會自己重跑一次並比對,不一致就紅 —— 所以忘了重跑會在
+build 上看到,而不是變成「開發機和線上跑不同的程式碼」。
+
+uv 的版本寫在 `requirements.in` 檔頭的 `# uv-version:` 那一行,CI 直接讀它,所以
+只有那一個地方有版號。比對是逐位元組的,不同版本的 uv 可能重排一行或改寫檔頭,
+會讓一個正確的改動變紅。
+
+在 repo 目錄下重跑時,現有的 `requirements.txt` 會被當成既有的釘選沿用 —— 這正是
+要的行為:只重解你改動到的部分,其他 42 個套件留在原地。要整批升級是另一件事
+(`-U`),獨立一個 commit、自己跑一次測試。
+
+為什麼是 lock 而不是手動釘:`requirements.in` 只寫了 5 個套件,乾淨安裝會裝進
+47 個。2026-09-01 那次線上全掛,壞的就是另外 42 個裡的一個 —— 它在某天早上跳了
+一個 major,而沒有任何檔案說得上話。
+
 開啟後在左側貼上 **Bearer token**(見下方),就能開始對話。例如:
 
 > 接上我的 postgres 倉庫(host … / database … / schema …),看一下 schema

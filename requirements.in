@@ -1,0 +1,82 @@
+# The dependencies this app actually asks for. Edit THIS file, never
+# requirements.txt — that one is generated from this one and holds the whole
+# resolved tree.
+#
+#   uv pip compile --universal --python-version 3.11 \
+#       --output-file requirements.txt requirements.in
+#
+# Run it after every edit here and commit both files together; CI regenerates
+# it and fails if the two disagree, so a forgotten run shows up as a red
+# build rather than as two machines running different code.
+#
+# Use the uv named below. The check compares the generated file byte for byte,
+# so a different uv can reorder a line or reword the header and turn a correct
+# change red. The workflow reads this line rather than repeating the number, so
+# bumping it here is the whole change — then recompile and commit both files.
+#
+# uv-version: 0.10.9
+#
+# Recompiling in this directory keeps the existing requirements.txt as pinned
+# preferences, which is what you want: it re-resolves what your edit changed
+# and leaves the other 42 packages where they were. Deliberately upgrading
+# everything is `-U`, and it is a separate commit with its own test run.
+#
+# --universal resolves for every platform at once and writes the environment
+# markers, because the checkouts are macOS and the container and CI are Linux.
+# Compiling on one of them alone drops the other's platform-specific packages —
+# the Linux install pulls SecretStorage and jeepney, which a macOS resolve
+# never sees.
+#
+# WHY THIS FILE EXISTS AT ALL, in one measurement: it names 5 packages, and a
+# clean install puts 47 in the venv. Pinning by hand pins the 5. On 2026-09-01
+# the app broke because one of the other 42 changed a major version overnight.
+#
+# Not using --generate-hashes yet. It would add integrity checking on every
+# container start, which is worth having; it also makes any hash mismatch a
+# hard install failure, and init.sh continues startup after a failed install.
+# Decide that separately from this file's job, which is reproducibility.
+
+streamlit==1.52.0
+# Pinned, not a floor. `>=2.11.0` resolved to 2.35.3 on a fresh install
+# (2026-08-28) and the confirmation gate stops working there: a destructive
+# tool the model asks for is neither executed NOR raised for approval — the
+# run just continues and answers as if it were done. Nothing is deleted, so
+# it is not a safety hole, but the user is told a thing happened that did
+# not. Every checkout in use is on 2.15.0, where all 13 agent_runtime tests
+# pass; the floor meant developers and a fresh install ran different code.
+# Raise this deliberately, with test_a_deferred_destructive_tool_is_still_gated
+# green, not by letting the resolver choose.
+pydantic-ai-slim[openai,mcp]==2.15.0
+# Pinning 2.15.0 was not enough, because its own MCP dependency is a floor:
+# `pydantic-ai-slim[mcp]` asks for `fastmcp-slim[client]>=3.3.0`, and on
+# 2026-09-01 that resolved to 4.0.0, which moved from `mcp<2.0` to
+# `mcp>=2.0`. mcp 2.x renamed the capability fields to snake_case
+# (`PromptsCapability.listChanged` → `list_changed`) while
+# pydantic_ai/mcp.py:578 still reads the old spelling, so every chat turn
+# died at MCP handshake time with
+#   AttributeError: 'PromptsCapability' object has no attribute 'listChanged'
+# Nothing in the app was wrong; the deployed container had simply been
+# installed on a day the resolver answered differently.
+#
+# Three lines, because they say different things. `fastmcp-slim` names the
+# package that actually moved — 3.4.7 is the newest 3.x, is what the deployed
+# slot runs, and was installed into a clean venv here with the whole suite
+# green. `mcp<2.0` names the invariant that made the move fatal: this
+# pydantic-ai reads the v1 spelling. It stays even though the `==` below
+# implies it, because the exact version is a fact about today and the ceiling
+# is the reason it was chosen. The pin is exact rather than a bare `<2.0`,
+# because a ceiling alone still lets a fresh install land anywhere in
+# 1.24–1.x while the checkouts sit on one version — the same "developers and
+# a fresh install ran different code" this file was already written to stop,
+# eight lines up. Raise any of them deliberately, with
+# test_the_installed_mcp_sdk_matches_what_pydantic_ai_reads green.
+fastmcp-slim[client]==3.4.7
+mcp==1.29.1  # invariant: must stay <2.0 for this pydantic-ai
+# Same shape again, one layer down: `>=2.0.0` let a fresh install take openai
+# 3.6.0 while every developer checkout ran 2.46.0. pydantic-ai 2.15.0 declares
+# `openai>=2.45.0` with no ceiling, and a missing ceiling is not an
+# endorsement of the next major — 3.x shipped after it. Held at the 2.46.0 the
+# checkouts run, which is inside the range pydantic-ai actually declares. The
+# unit tests pass on 3.6.0 too, but they drive a FunctionModel and never make
+# a real API call, so they are not evidence about this pin either way.
+openai==2.46.0

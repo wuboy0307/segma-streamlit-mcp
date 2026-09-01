@@ -56,9 +56,52 @@ jobs:
       - name: PROMPTS.md still says what the app says
         run: python tools/extract_prompt_templates.py --check-doc
 
-      # requirements.txt rather than a second list naming just what the test
-      # imports — a dependency list that only CI reads is one more thing to
-      # drift.
+      # requirements.txt is generated from requirements.in, so it can silently
+      # stop describing it — someone edits the .in, forgets to recompile, and
+      # the lock keeps installing the old tree while the diff looks correct.
+      # Recompiling into a scratch directory and diffing is what turns that
+      # into a red build. The scratch copy keeps the same relative filenames on
+      # purpose: uv writes the command line into the header, so compiling to a
+      # different path would differ in the header alone and fail every run.
+      # uv itself is pinned, and that is not tidiness. This step compares the
+      # OUTPUT of a generator, so the generator's version is an input to the
+      # comparison: a newer uv that reorders a line or reworks the header would
+      # fail this check on a repository nobody had touched.
+      #
+      # The version is READ from requirements.in rather than written here.
+      # Naming it in both places would need whoever bumps it to remember the
+      # other one at the moment of typing, which is the kind of rule that fails
+      # exactly when someone is busy. One number, one file.
+      - name: Install uv (version comes from requirements.in — one source)
+        run: |
+          ver=$(sed -n 's/^# uv-version: *//p' requirements.in | head -1)
+          [ -n "$ver" ] || { echo "::error::requirements.in has no '# uv-version:' line"; exit 1; }
+          pip install "uv==$ver"
+
+      # BOTH files are copied in, and the lock is the load-bearing half.
+      # `uv pip compile` treats an existing output file as pinned preferences
+      # (only `-U` ignores them), so compiling from the .in alone re-resolves
+      # all 42 transitive packages against live PyPI. That check would answer
+      # "has PyPI moved since this morning" — red on a commit that changed
+      # nothing, the first day any dependency ships a release — instead of
+      # "does the lock still describe the .in". Copying the lock in reproduces
+      # exactly what a developer runs in the repo, which is also what makes the
+      # remedy printed below actually work for them.
+      #
+      # rm -rf first: on a reused runner a leftover file here would silently
+      # become the preference set, so the same commit could pass or fail
+      # depending on what ran before it.
+      - name: requirements.txt still matches requirements.in
+        run: |
+          rm -rf /tmp/lockcheck && mkdir -p /tmp/lockcheck
+          cp requirements.in requirements.txt /tmp/lockcheck/
+          (cd /tmp/lockcheck && uv pip compile --universal --python-version 3.11 \
+             --output-file requirements.txt requirements.in)
+          diff -u requirements.txt /tmp/lockcheck/requirements.txt \
+            || { echo "::error::requirements.in changed without recompiling the lock. Run: uv pip compile --universal --python-version 3.11 --output-file requirements.txt requirements.in"; exit 1; }
+
+      # The lock, not the .in — CI must install exactly what the container
+      # installs, which is this file.
       - name: Install dependencies
         run: pip install -r requirements.txt
 
