@@ -9,4 +9,36 @@ streamlit==1.52.0
 # Raise this deliberately, with test_a_deferred_destructive_tool_is_still_gated
 # green, not by letting the resolver choose.
 pydantic-ai-slim[openai,mcp]==2.15.0
-openai>=2.0.0
+# Pinning 2.15.0 was not enough, because its own MCP dependency is a floor:
+# `pydantic-ai-slim[mcp]` asks for `fastmcp-slim[client]>=3.3.0`, and on
+# 2026-09-01 that resolved to 4.0.0, which moved from `mcp<2.0` to
+# `mcp>=2.0`. mcp 2.x renamed the capability fields to snake_case
+# (`PromptsCapability.listChanged` → `list_changed`) while
+# pydantic_ai/mcp.py:578 still reads the old spelling, so every chat turn
+# died at MCP handshake time with
+#   AttributeError: 'PromptsCapability' object has no attribute 'listChanged'
+# Nothing in the app was wrong; the deployed container had simply been
+# installed on a day the resolver answered differently.
+#
+# Three lines, because they say different things. `fastmcp-slim` names the
+# package that actually moved — 3.4.7 is the newest 3.x, is what the deployed
+# slot runs, and was installed into a clean venv here with the whole suite
+# green. `mcp<2.0` names the invariant that made the move fatal: this
+# pydantic-ai reads the v1 spelling. It stays even though the `==` below
+# implies it, because the exact version is a fact about today and the ceiling
+# is the reason it was chosen. The pin is exact rather than a bare `<2.0`,
+# because a ceiling alone still lets a fresh install land anywhere in
+# 1.24–1.x while the checkouts sit on one version — the same "developers and
+# a fresh install ran different code" this file was already written to stop,
+# eight lines up. Raise any of them deliberately, with
+# test_the_installed_mcp_sdk_matches_what_pydantic_ai_reads green.
+fastmcp-slim[client]==3.4.7
+mcp==1.29.1  # invariant: must stay <2.0 for this pydantic-ai
+# Same shape again, one layer down: `>=2.0.0` let a fresh install take openai
+# 3.6.0 while every developer checkout ran 2.46.0. pydantic-ai 2.15.0 declares
+# `openai>=2.45.0` with no ceiling, and a missing ceiling is not an
+# endorsement of the next major — 3.x shipped after it. Held at the 2.46.0 the
+# checkouts run, which is inside the range pydantic-ai actually declares. The
+# unit tests pass on 3.6.0 too, but they drive a FunctionModel and never make
+# a real API call, so they are not evidence about this pin either way.
+openai==2.46.0

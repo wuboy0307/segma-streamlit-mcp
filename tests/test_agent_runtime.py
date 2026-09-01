@@ -315,6 +315,50 @@ def test_deferred_schemas_never_reach_the_wire():
     assert "search_tools" in sent_eager, sent_eager
 
 
+def test_the_installed_mcp_sdk_matches_what_pydantic_ai_reads():
+    """裝起來的 MCP SDK,欄位名稱要跟 pydantic-ai 讀的那一版對得上。
+
+    2026-09-01 線上每一句對話都回 `AttributeError: 'PromptsCapability' object
+    has no attribute 'listChanged'`,程式碼一行沒錯——是那台容器安裝的那天,
+    resolver 給了 fastmcp-slim 4.0.0(mcp 2.x,欄位改成 snake_case),而
+    pydantic-ai 2.15.0 仍讀舊拼法。requirements.txt 只釘了 pydantic-ai,它自己
+    對 fastmcp 的相依是下限不是釘死,所以開發機跟新安裝跑的是兩套。
+
+    這條測試不連網、不連 MCP:直接照 pydantic-ai 握手時走的那條路,拿 SDK 的
+    型別餵給 ServerCapabilities.from_mcp_sdk。requirements.txt 裡的版本被放寬、
+    或哪天調高了,CI 的 `pip install -r requirements.txt` 就會讓它紅——不必等到
+    有人在瀏覽器打字才發現。(版本全部釘死之後不會自己漂;會漂的是有人去動它。)
+
+    **斷言刻意不是「有沒有爆」。** 第一版寫成 caps 全用預設值、然後 assert
+    got.tools is True,那是綠得沒有意義的:那三個旗標來自 `cap is not None`,跟
+    欄位改名一點關係都沒有,測試會紅純粹是 AttributeError 剛好往上冒。而那個副
+    作用不耐久——同一個檔案的 mcp.py:175 已經有 `getattr(x, 'lastModified', None)`
+    這種防禦性讀法,pydantic-ai 哪天對 listChanged 也這樣寫,握手就不爆了,
+    prompts_list_changed 會對每個「其實有宣告」的 server 靜靜地變成 False,
+    list-changed 通知全被忽略,而那版測試照樣綠。
+
+    所以改成:用 server 真正送來的 wire JSON(camelCase,兩個 mcp major 都吃)
+    餵進去,然後斷言翻譯出來的值**是 True**。欄位對不上時,不管是爆掉還是被防禦
+    性讀成 None,這條都會紅。
+    """
+    import mcp.types as mcp_types
+    from pydantic_ai.mcp import ServerCapabilities
+
+    # initialize 回應裡長這樣;wire 格式在 mcp 1.x / 2.x 都是 camelCase,所以
+    # 這樣構造不會綁死在某一版的 Python 屬性拼法上。
+    caps = mcp_types.ServerCapabilities.model_validate(
+        {
+            "prompts": {"listChanged": True},
+            "resources": {"listChanged": True},
+            "tools": {"listChanged": True},
+        }
+    )
+    got = ServerCapabilities.from_mcp_sdk(caps)
+    assert got.prompts_list_changed is True, got
+    assert got.resources_list_changed is True, got
+    assert got.tools_list_changed is True, got
+
+
 def test_a_deferred_destructive_tool_is_still_gated():
     """最重要的一條:延後載入不能繞過確認閘門。
 
@@ -353,6 +397,7 @@ if __name__ == "__main__":
                test_eager_set_stays_under_the_openai_tool_cap,
                test_eager_list_holds_nothing_the_system_prompt_forbids,
                test_deferred_schemas_never_reach_the_wire,
+               test_the_installed_mcp_sdk_matches_what_pydantic_ai_reads,
                test_a_deferred_destructive_tool_is_still_gated]:
         fn()
         print(f"  ✓ {fn.__name__}")
